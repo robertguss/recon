@@ -269,6 +269,32 @@ func TestListRespectsLimit(t *testing.T) {
 	}
 }
 
+func TestFindReceiverDotSyntax(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// "T.Ambig" should match the method with receiver T
+	res, err := NewService(conn).Find(context.Background(), "T.Ambig", QueryOptions{})
+	if err != nil {
+		t.Fatalf("Find T.Ambig error: %v", err)
+	}
+	if res.Symbol.Receiver != "T" || res.Symbol.Name != "Ambig" {
+		t.Fatalf("expected T.Ambig, got %s.%s", res.Symbol.Receiver, res.Symbol.Name)
+	}
+
+	// Plain "Ambig" should still be ambiguous (2 matches)
+	_, err = NewService(conn).Find(context.Background(), "Ambig", QueryOptions{})
+	if _, ok := err.(AmbiguousError); !ok {
+		t.Fatalf("expected AmbiguousError for plain Ambig, got %T (%v)", err, err)
+	}
+
+	// "X.NotExist" should be not found
+	_, err = NewService(conn).Find(context.Background(), "X.NotExist", QueryOptions{})
+	if _, ok := err.(NotFoundError); !ok {
+		t.Fatalf("expected NotFoundError for X.NotExist, got %T (%v)", err, err)
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {

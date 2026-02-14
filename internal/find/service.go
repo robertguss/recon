@@ -161,6 +161,13 @@ func (s *Service) Find(ctx context.Context, symbol string, opts QueryOptions) (R
 	opts = normalizeQueryOptions(opts)
 	filtersApplied := hasActiveFilters(opts)
 
+	// Support "Receiver.Name" dot syntax
+	var receiverFilter string
+	if idx := strings.IndexByte(symbol, '.'); idx > 0 && idx < len(symbol)-1 {
+		receiverFilter = symbol[:idx]
+		symbol = symbol[idx+1:]
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 SELECT s.id, s.kind, s.name, COALESCE(s.signature, ''), COALESCE(s.body, ''),
        s.line_start, s.line_end, COALESCE(s.receiver, ''), f.path, COALESCE(p.path, '.')
@@ -198,12 +205,27 @@ ORDER BY p.path, f.path, s.kind, s.receiver;
 		return Result{}, fmt.Errorf("iterate symbol rows: %w", err)
 	}
 
+	// Apply receiver filter from dot syntax
+	if receiverFilter != "" {
+		filtered := make([]Symbol, 0, len(matches))
+		for _, m := range matches {
+			if m.Receiver == receiverFilter {
+				filtered = append(filtered, m)
+			}
+		}
+		matches = filtered
+	}
+
 	if len(matches) == 0 {
+		queryLabel := symbol
+		if receiverFilter != "" {
+			queryLabel = receiverFilter + "." + symbol
+		}
 		suggestions, err := s.suggestions(ctx, symbol)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{}, NotFoundError{Symbol: symbol, Suggestions: suggestions}
+		return Result{}, NotFoundError{Symbol: queryLabel, Suggestions: suggestions}
 	}
 
 	if filtersApplied {
