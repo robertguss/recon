@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +29,16 @@ func run() int {
 	}
 
 	if err := root.Execute(); err != nil {
+		var exitErr cli.ExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.Message != "" {
+				fmt.Fprintln(stderr, exitErr.Message)
+			}
+			if exitErr.Code != 0 {
+				return exitErr.Code
+			}
+			return 1
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

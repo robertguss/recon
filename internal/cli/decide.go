@@ -43,19 +43,26 @@ func newDecideCommand(app *App) *cobra.Command {
 				return err
 			}
 
-			if jsonOut {
-				return writeJSON(result)
-			}
+				if jsonOut {
+					_ = writeJSON(result)
+					if !result.VerificationPassed {
+						return ExitError{Code: 2}
+					}
+					return nil
+				}
 
 			if result.Promoted {
 				fmt.Printf("Decision promoted: proposal=%d decision=%d\n", result.ProposalID, result.DecisionID)
 			} else {
 				fmt.Printf("Decision pending: proposal=%d\n", result.ProposalID)
-			}
-			fmt.Printf("Verification: passed=%v details=%s\n", result.VerificationPassed, result.VerificationDetails)
-			return nil
-		},
-	}
+				}
+				fmt.Printf("Verification: passed=%v details=%s\n", result.VerificationPassed, result.VerificationDetails)
+				if !result.VerificationPassed {
+					return ExitError{Code: 2}
+				}
+				return nil
+			},
+		}
 
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "Decision reasoning")
 	cmd.Flags().StringVar(&confidence, "confidence", "medium", "Confidence: low, medium, high")

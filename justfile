@@ -1,90 +1,90 @@
 set shell := ["zsh", "-cu"]
 set positional-arguments := true
 
-[group('meta')]
 # Show available recipes and their descriptions.
+[group('meta')]
 default:
     @just --list --unsorted
 
-[group('build')]
 # Build the recon binary into ./bin/recon.
+[group('build')]
 build:
     mkdir -p bin
     go build -o bin/recon ./cmd/recon
 
-[group('build')]
 # Install recon to GOPATH/bin.
+[group('build')]
 install:
     go install ./cmd/recon
 
-[group('build')]
 # Run recon via go run, forwarding all args.
+[group('build')]
 run *args:
     go run ./cmd/recon {{args}}
 
-[group('quality')]
 # Generate coverage.out and print function coverage summary.
+[group('quality')]
 cover:
     go test ./... -coverprofile=coverage.out
     go tool cover -func=coverage.out
 
-[group('quality')]
 # Open HTML coverage report from coverage.out.
+[group('quality')]
 cover-html:
     go tool cover -html=coverage.out
 
-[group('quality')]
 # Format all Go packages.
+[group('quality')]
 fmt:
     go fmt ./...
 
-[group('quality')]
 # Run the full test suite.
+[group('quality')]
 test:
     go test ./...
 
-[group('quality')]
 # Run tests with the race detector enabled.
+[group('quality')]
 test-race:
     go test -race ./...
 
-[group('workflow')]
 # Record a decision with checks/evidence flags.
+[group('workflow')]
 decide *args:
     go run ./cmd/recon decide {{args}}
 
-[group('workflow')]
 # Search indexed symbols/files/imports.
+[group('workflow')]
 find *args:
     go run ./cmd/recon find {{args}}
 
-[group('workflow')]
 # Initialize local recon database and schema.
+[group('workflow')]
 init:
     go run ./cmd/recon init
 
-[group('workflow')]
 # Show orient output (status + suggested next actions).
+[group('workflow')]
 orient *args:
     go run ./cmd/recon orient {{args}}
 
-[group('workflow')]
 # Recall previously recorded decisions.
+[group('workflow')]
 recall *args:
     go run ./cmd/recon recall {{args}}
 
-[group('workflow')]
 # Index and sync current repository state.
+[group('workflow')]
 sync:
     go run ./cmd/recon sync
 
-[group('cleanup')]
 # Remove local build and coverage artifacts.
+[group('cleanup')]
 clean:
     rm -rf bin
     rm -f coverage.out
 
-[group('cleanup')]
 # Delete the local recon SQLite database.
+[group('cleanup')]
 db-reset:
     rm -f .recon/recon.db

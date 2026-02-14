@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/robertguss/recon/internal/db"
 	"github.com/spf13/cobra"
@@ -16,6 +19,14 @@ func newInitCommand(app *App) *cobra.Command {
 		Use:   "init",
 		Short: "Initialize recon storage in this repository",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			goModPath := filepath.Join(app.ModuleRoot, "go.mod")
+			if _, err := os.Stat(goModPath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("go.mod not found at %s; run `recon` from a Go module", app.ModuleRoot)
+				}
+				return fmt.Errorf("stat go.mod: %w", err)
+			}
+
 			if _, err := db.EnsureReconDir(app.ModuleRoot); err != nil {
 				return err
 			}

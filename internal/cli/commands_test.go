@@ -193,8 +193,12 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 	if err != nil || !strings.Contains(out, "\"promoted\": true") {
 		t.Fatalf("decide promoted failed out=%q err=%v", out, err)
 	}
-	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"Pending", "--reasoning", "because", "--evidence-summary", "missing", "--check-type", "file_exists", "--check-spec", `{"path":"missing"}`})
-	if err != nil || !strings.Contains(out, "Decision pending") {
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"Pending", "--reasoning", "because", "--evidence-summary", "missing", "--check-type", "file_exists", "--check-spec", `{"path":"missing"}`, "--json"})
+	if err == nil || !strings.Contains(out, "\"verification_passed\": false") {
+		t.Fatalf("decide pending json failed out=%q err=%v", out, err)
+	}
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"Pending text", "--reasoning", "because", "--evidence-summary", "missing", "--check-type", "file_exists", "--check-spec", `{"path":"missing"}`})
+	if err == nil || !strings.Contains(out, "Decision pending") {
 		t.Fatalf("decide pending text failed out=%q err=%v", out, err)
 	}
 
@@ -228,13 +232,28 @@ func TestInitCommandErrorBranches(t *testing.T) {
 	origRunMigrations := runMigrations
 	defer func() { runMigrations = origRunMigrations }()
 
-	// EnsureReconDir error.
+	// Missing go.mod error.
+	noModRoot := t.TempDir()
+	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: noModRoot}), nil); err == nil || !strings.Contains(err.Error(), "go.mod not found") {
+		t.Fatalf("expected missing go.mod error, got %v", err)
+	}
+
+	// EnsureReconDir error: .recon exists as file.
+	rootEnsureDir := setupModuleRoot(t)
+	if err := os.WriteFile(filepath.Join(rootEnsureDir, ".recon"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write .recon file: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: rootEnsureDir}), nil); err == nil {
+		t.Fatal("expected EnsureReconDir error")
+	}
+
+	// go.mod stat error on invalid module root.
 	fileRoot := filepath.Join(t.TempDir(), "as-file")
 	if err := os.WriteFile(fileRoot, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write fileRoot: %v", err)
 	}
-	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: fileRoot}), nil); err == nil {
-		t.Fatal("expected EnsureReconDir error")
+	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: fileRoot}), nil); err == nil || !strings.Contains(err.Error(), "stat go.mod") {
+		t.Fatalf("expected stat go.mod error, got %v", err)
 	}
 
 	// db.Open error: .recon/recon.db exists as directory.
@@ -439,5 +458,157 @@ func TestCommandErrorBranches(t *testing.T) {
 	out, _, err = runCommandWithCapture(t, newFindCommand(app5), []string{"Solo"})
 	if err != nil || !strings.Contains(out, "Receiver: R") || !strings.Contains(out, "- func Dep") {
 		t.Fatalf("expected receiver and dependency lines, out=%q err=%v", out, err)
+	}
+}
+
+func TestFindCommandTextErrorOutput(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Ambig"})
+	if err == nil || !strings.Contains(out, "ambiguous") || !strings.Contains(out, "pkg1/a.go") {
+		t.Fatalf("expected ambiguous text output with candidates, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"Al"})
+	if err == nil || !strings.Contains(out, "not found") || !strings.Contains(out, "Suggestions:") {
+		t.Fatalf("expected not-found text output with suggestions, out=%q err=%v", out, err)
+	}
+}
+
+func TestFindCommandTextAmbiguousReceiverOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	mainGo := `package main
+type A struct{}
+type B struct{}
+func (A) Clash() {}
+func (B) Clash() {}
+`
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Clash"})
+	if err == nil || !strings.Contains(out, "A.Clash") || !strings.Contains(out, "B.Clash") {
+		t.Fatalf("expected receiver-qualified candidates, out=%q err=%v", out, err)
+	}
+}
+
+func TestOrientCommandMachineFlags(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	origBuildOrient := buildOrient
+	origRunOrientSync := runOrientSync
+	origInteractive := isInteractive
+	origAsk := askYesNo
+	defer func() {
+		buildOrient = origBuildOrient
+		runOrientSync = origRunOrientSync
+		isInteractive = origInteractive
+		askYesNo = origAsk
+	}()
+
+	isInteractive = func() bool { return false }
+	askYesNo = func(string, bool) (bool, error) { return false, nil }
+
+	buildCalls := 0
+	syncCalls := 0
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		buildCalls++
+		return orient.Payload{}, nil
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error {
+		syncCalls++
+		return nil
+	}
+	if _, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--sync", "--json"}); err != nil {
+		t.Fatalf("orient --sync failed: %v", err)
+	}
+	if syncCalls != 1 || buildCalls != 1 {
+		t.Fatalf("expected sync-before-build once, syncCalls=%d buildCalls=%d", syncCalls, buildCalls)
+	}
+
+	buildCalls = 0
+	syncCalls = 0
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		buildCalls++
+		if buildCalls == 1 {
+			return orient.Payload{Freshness: orient.Freshness{IsStale: true, Reason: "stale"}}, nil
+		}
+		return orient.Payload{}, nil
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error {
+		syncCalls++
+		return nil
+	}
+	if _, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--auto-sync", "--json"}); err != nil {
+		t.Fatalf("orient --auto-sync failed: %v", err)
+	}
+	if syncCalls != 1 || buildCalls != 2 {
+		t.Fatalf("expected one auto-sync and rebuild, syncCalls=%d buildCalls=%d", syncCalls, buildCalls)
+	}
+
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		return orient.Payload{}, nil
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error { return errors.New("sync now fail") }
+	if _, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--sync", "--json"}); err == nil {
+		t.Fatal("expected orient --sync error")
+	}
+
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		return orient.Payload{Freshness: orient.Freshness{IsStale: true, Reason: "stale"}}, nil
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error { return errors.New("auto sync fail") }
+	if _, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--auto-sync", "--json"}); err == nil {
+		t.Fatal("expected orient --auto-sync sync error")
+	}
+
+	buildCalls = 0
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		buildCalls++
+		if buildCalls == 1 {
+			return orient.Payload{Freshness: orient.Freshness{IsStale: true, Reason: "stale"}}, nil
+		}
+		return orient.Payload{}, errors.New("build after auto-sync failed")
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error { return nil }
+	if _, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--auto-sync", "--json"}); err == nil {
+		t.Fatal("expected orient --auto-sync rebuild error")
+	}
+
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		return orient.Payload{Freshness: orient.Freshness{IsStale: true, Reason: "stale"}}, nil
+	}
+	runOrientSync = func(context.Context, *sql.DB, string) error { return nil }
+	out, stderr, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--json-strict"})
+	if err != nil {
+		t.Fatalf("orient --json-strict failed: %v", err)
+	}
+	if stderr != "" || !strings.Contains(out, "\"freshness\"") {
+		t.Fatalf("expected strict json-only output, out=%q stderr=%q", out, stderr)
 	}
 }
