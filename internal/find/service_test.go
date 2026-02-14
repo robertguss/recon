@@ -192,6 +192,83 @@ func TestFindFileFilterSuffixMatch(t *testing.T) {
 	}
 }
 
+func TestListByPackage(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total < 3 {
+		t.Fatalf("expected at least 3 symbols in root package, got %d", result.Total)
+	}
+	if result.Limit != 50 {
+		t.Fatalf("expected limit 50, got %d", result.Limit)
+	}
+	// Symbols should not have bodies in list mode
+	for _, s := range result.Symbols {
+		if s.Body != "" {
+			t.Fatalf("expected empty body in list mode, got body for %s", s.Name)
+		}
+	}
+}
+
+func TestListByKind(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{Kind: "method"}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("expected 1 method, got %d", result.Total)
+	}
+	if result.Symbols[0].Kind != "method" {
+		t.Fatalf("expected method kind, got %s", result.Symbols[0].Kind)
+	}
+}
+
+func TestListByFile(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{FilePath: "main.go"}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total < 2 {
+		t.Fatalf("expected at least 2 symbols in main.go, got %d", result.Total)
+	}
+}
+
+func TestListNoFiltersReturnsError(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	_, err := NewService(conn).List(context.Background(), QueryOptions{}, 50)
+	if err == nil {
+		t.Fatal("expected error for list with no filters")
+	}
+}
+
+func TestListRespectsLimit(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 2)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(result.Symbols) > 2 {
+		t.Fatalf("expected at most 2 symbols, got %d", len(result.Symbols))
+	}
+	if result.Total < 3 {
+		t.Fatalf("expected total >= 3, got %d", result.Total)
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {
