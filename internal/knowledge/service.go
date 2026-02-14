@@ -208,6 +208,26 @@ WHERE id = ?;
 	}, nil
 }
 
+// CheckOutcome is the public version of runCheckOutcome for use by other packages.
+type CheckOutcome struct {
+	Passed   bool
+	Details  string
+	Baseline map[string]any
+}
+
+// RunCheckPublic exposes the check runner for use by external packages (e.g., pattern service).
+func (s *Service) RunCheckPublic(ctx context.Context, checkType, checkSpec, moduleRoot string) CheckOutcome {
+	outcome, err := s.runCheck(ctx, ProposeDecisionInput{
+		CheckType:  checkType,
+		CheckSpec:  checkSpec,
+		ModuleRoot: moduleRoot,
+	})
+	if err != nil {
+		return CheckOutcome{Passed: false, Details: err.Error(), Baseline: map[string]any{"error": err.Error()}}
+	}
+	return CheckOutcome{Passed: outcome.Passed, Details: outcome.Details, Baseline: outcome.Baseline}
+}
+
 type runCheckOutcome struct {
 	Passed   bool
 	Details  string
