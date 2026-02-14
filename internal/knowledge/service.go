@@ -268,7 +268,7 @@ func (s *Service) UpdateConfidence(ctx context.Context, id int64, confidence str
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("decision %d not found or archived", id)
+		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
 	}
 	return nil
 }

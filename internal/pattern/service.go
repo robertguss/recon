@@ -125,6 +125,7 @@ VALUES (?, ?, 'pattern', ?);
 		}
 
 		if err := tx.Commit(); err != nil {
+			_ = tx.Rollback()
 			return ProposePatternResult{}, fmt.Errorf("commit pattern tx: %w", err)
 		}
 		return ProposePatternResult{ProposalID: proposalID, PatternID: patternID, Promoted: true, VerificationPassed: true, VerificationDetails: outcome.Details}, nil
@@ -139,6 +140,7 @@ VALUES ('proposal', ?, ?, ?, ?, ?, ?, ?, 'broken');
 	}
 
 	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
 		return ProposePatternResult{}, fmt.Errorf("commit pending pattern tx: %w", err)
 	}
 

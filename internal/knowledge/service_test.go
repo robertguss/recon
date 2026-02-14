@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,8 +277,8 @@ func TestUpdateConfidence(t *testing.T) {
 	}
 
 	// Non-existent
-	if err := svc.UpdateConfidence(context.Background(), 99999, "low"); err == nil {
-		t.Fatal("expected error for non-existent decision")
+	if err := svc.UpdateConfidence(context.Background(), 99999, "low"); err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-existent decision, got %v", err)
 	}
 }
 

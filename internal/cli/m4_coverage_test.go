@@ -586,8 +586,8 @@ func TestM4DecideUpdateJSONError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for updating non-existent decision")
 	}
-	if !strings.Contains(out, `"code": "invalid_input"`) {
-		t.Fatalf("expected invalid_input envelope, out=%q", out)
+	if !strings.Contains(out, `"code": "not_found"`) {
+		t.Fatalf("expected not_found envelope, out=%q", out)
 	}
 }
 

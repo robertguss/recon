@@ -119,7 +119,14 @@ func newDecideCommand(app *App) *cobra.Command {
 				err = knowledge.NewService(conn).UpdateConfidence(cmd.Context(), updateID, confidence)
 				if err != nil {
 					if jsonOut {
-						_ = writeJSONError("invalid_input", err.Error(), map[string]any{"id": updateID})
+						code := "internal_error"
+						switch {
+						case errors.Is(err, knowledge.ErrNotFound):
+							code = "not_found"
+						case strings.Contains(err.Error(), "confidence must be"):
+							code = "invalid_input"
+						}
+						_ = writeJSONError(code, err.Error(), map[string]any{"id": updateID})
 						return ExitError{Code: 2}
 					}
 					return err
