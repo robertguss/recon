@@ -27,7 +27,13 @@ type Payload struct {
 	Summary         Summary          `json:"summary"`
 	Modules         []ModuleSummary  `json:"modules"`
 	ActiveDecisions []DecisionDigest `json:"active_decisions"`
+	RecentActivity  []RecentFile     `json:"recent_activity"`
 	Warnings        []string         `json:"warnings,omitempty"`
+}
+
+type RecentFile struct {
+	File         string `json:"file"`
+	LastModified string `json:"last_modified"`
 }
 
 type Architecture struct {
@@ -95,6 +101,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		},
 		Modules:         []ModuleSummary{},
 		ActiveDecisions: []DecisionDigest{},
+		RecentActivity:  []RecentFile{},
 	}
 
 	if opts.MaxModules <= 0 {
@@ -117,6 +124,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		return Payload{}, err
 	}
 	s.loadModuleHeat(ctx, opts.ModuleRoot, &payload)
+	s.loadRecentActivity(ctx, opts.ModuleRoot, &payload)
 
 	state, exists, err := db.LoadSyncState(ctx, s.db)
 	if err != nil {
@@ -354,4 +362,35 @@ func (s *Service) loadModuleHeat(ctx context.Context, moduleRoot string, payload
 			payload.Modules[i].Heat = "cold"
 		}
 	}
+}
+
+func (s *Service) loadRecentActivity(ctx context.Context, moduleRoot string, payload *Payload) {
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "-n", "20", "--pretty=format:%aI", "--name-only", "--diff-filter=ACMR")
+	out, err := cmd.Output()
+	if err != nil {
+		return // Non-fatal
+	}
+
+	seen := map[string]bool{}
+	activity := []RecentFile{}
+	var currentDate string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// ISO date lines start with digit and have dash at position 4
+		if len(line) > 10 && line[4] == '-' {
+			currentDate = line
+			continue
+		}
+		if !seen[line] && currentDate != "" {
+			seen[line] = true
+			activity = append(activity, RecentFile{File: line, LastModified: currentDate})
+			if len(activity) >= 5 {
+				break
+			}
+		}
+	}
+	payload.RecentActivity = activity
 }

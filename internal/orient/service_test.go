@@ -321,3 +321,42 @@ func TestBuildArchitectureSection(t *testing.T) {
 		t.Fatalf("expected cmd/recon/main.go in entry points, got %v", payload.Architecture.EntryPoints)
 	}
 }
+
+func TestBuildRecentActivity(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Tester")
+	run("add", ".")
+	run("commit", "-m", "init")
+
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.RecentActivity) == 0 {
+		t.Fatal("expected recent activity")
+	}
+	if payload.RecentActivity[0].File != "main.go" && payload.RecentActivity[0].File != "go.mod" {
+		t.Fatalf("unexpected recent activity file: %s", payload.RecentActivity[0].File)
+	}
+}

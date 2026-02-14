@@ -56,6 +56,13 @@ func RenderText(payload Payload) string {
 		}
 	}
 
+	if len(payload.RecentActivity) > 0 {
+		b.WriteString("\nRecent activity:\n")
+		for _, a := range payload.RecentActivity {
+			fmt.Fprintf(&b, "- %s (%s)\n", a.File, a.LastModified)
+		}
+	}
+
 	if len(payload.Warnings) > 0 {
 		b.WriteString("\nWarnings:\n")
 		for _, w := range payload.Warnings {
