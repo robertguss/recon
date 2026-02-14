@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -56,10 +57,12 @@ type Summary struct {
 }
 
 type ModuleSummary struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	FileCount int    `json:"file_count"`
-	LineCount int    `json:"line_count"`
+	Path          string `json:"path"`
+	Name          string `json:"name"`
+	FileCount     int    `json:"file_count"`
+	LineCount     int    `json:"line_count"`
+	Heat          string `json:"heat"`
+	RecentCommits int    `json:"recent_commits"`
 }
 
 type DecisionDigest struct {
@@ -113,6 +116,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 	if err := s.loadArchitecture(ctx, &payload); err != nil {
 		return Payload{}, err
 	}
+	s.loadModuleHeat(ctx, opts.ModuleRoot, &payload)
 
 	state, exists, err := db.LoadSyncState(ctx, s.db)
 	if err != nil {
@@ -310,4 +314,44 @@ func formatDependencyFlow(deps map[string][]string) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")
+}
+
+func (s *Service) loadModuleHeat(ctx context.Context, moduleRoot string, payload *Payload) {
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=2 weeks ago", "--name-only", "--pretty=format:")
+	out, err := cmd.Output()
+	if err != nil {
+		return // Non-fatal: heat is optional
+	}
+
+	counts := map[string]int{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		dir := filepath.Dir(line)
+		if dir == "." {
+			counts["."]++
+		} else {
+			for _, m := range payload.Modules {
+				if strings.HasPrefix(filepath.ToSlash(dir), m.Path) || (m.Path == "." && !strings.Contains(dir, "/")) {
+					counts[m.Path]++
+					break
+				}
+			}
+		}
+	}
+
+	for i := range payload.Modules {
+		c := counts[payload.Modules[i].Path]
+		payload.Modules[i].RecentCommits = c
+		switch {
+		case c >= 4:
+			payload.Modules[i].Heat = "hot"
+		case c >= 1:
+			payload.Modules[i].Heat = "warm"
+		default:
+			payload.Modules[i].Heat = "cold"
+		}
+	}
 }

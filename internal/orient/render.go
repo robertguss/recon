@@ -39,7 +39,10 @@ func RenderText(payload Payload) string {
 		b.WriteString("- (none)\n")
 	} else {
 		for _, m := range payload.Modules {
-			fmt.Fprintf(&b, "- %s (%s): %d files, %d lines\n", m.Path, m.Name, m.FileCount, m.LineCount)
+			if m.Heat == "cold" {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s (%s): %d files, %d lines [%s]\n", m.Path, m.Name, m.FileCount, m.LineCount, strings.ToUpper(m.Heat))
 		}
 	}
 	b.WriteString("\n")
