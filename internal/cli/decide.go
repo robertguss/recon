@@ -21,13 +21,110 @@ func newDecideCommand(app *App) *cobra.Command {
 		checkPattern    string
 		checkScope      string
 		jsonOut         bool
+		listFlag        bool
+		deleteID        int64
+		updateID        int64
 	)
 
 	cmd := &cobra.Command{
-		Use:   "decide <title>",
+		Use:   "decide [<title>]",
 		Short: "Propose a decision, verify evidence, and auto-promote when checks pass",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if listFlag || deleteID > 0 || updateID > 0 {
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("requires exactly 1 arg(s), only received %d", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// List mode
+			if listFlag {
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				items, err := knowledge.NewService(conn).ListDecisions(cmd.Context())
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+
+				if jsonOut {
+					return writeJSON(items)
+				}
+				if len(items) == 0 {
+					fmt.Println("No active decisions.")
+					return nil
+				}
+				for _, item := range items {
+					fmt.Printf("#%d %s (confidence=%s, drift=%s)\n", item.ID, item.Title, item.Confidence, item.Drift)
+				}
+				return nil
+			}
+
+			// Delete mode
+			if deleteID > 0 {
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				err = knowledge.NewService(conn).ArchiveDecision(cmd.Context(), deleteID)
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("not_found", err.Error(), map[string]any{"id": deleteID})
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(map[string]any{"archived": true, "id": deleteID})
+				}
+				fmt.Printf("Decision %d archived.\n", deleteID)
+				return nil
+			}
+
+			// Update mode
+			if updateID > 0 {
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				err = knowledge.NewService(conn).UpdateConfidence(cmd.Context(), updateID, confidence)
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("invalid_input", err.Error(), map[string]any{"id": updateID})
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(map[string]any{"updated": true, "id": updateID, "confidence": confidence})
+				}
+				fmt.Printf("Decision %d confidence updated to %s.\n", updateID, confidence)
+				return nil
+			}
+
+			// Propose mode (original flow)
 			title := args[0]
 
 			resolvedSpec, err := buildCheckSpec(checkType, checkSpec, checkPath, checkSymbol, checkPattern, checkScope)
@@ -103,10 +200,9 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkPattern, "check-pattern", "", "Typed check field for grep_pattern: regex pattern")
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
-
-	_ = cmd.MarkFlagRequired("reasoning")
-	_ = cmd.MarkFlagRequired("evidence-summary")
-	_ = cmd.MarkFlagRequired("check-type")
+	cmd.Flags().BoolVar(&listFlag, "list", false, "List active decisions")
+	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a decision by ID")
+	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence)")
 
 	return cmd
 }

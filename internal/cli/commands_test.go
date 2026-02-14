@@ -866,6 +866,83 @@ func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 	}
 }
 
+func TestDecideLifecycleFlags(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Create a decision
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"Lifecycle Test", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
+	})
+	if err != nil {
+		t.Fatalf("decide create: %v", err)
+	}
+	if !strings.Contains(out, `"promoted": true`) {
+		t.Fatalf("expected promoted, out=%q", out)
+	}
+
+	// --list JSON
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list", "--json"})
+	if err != nil {
+		t.Fatalf("decide --list --json: %v", err)
+	}
+	if !strings.Contains(out, "Lifecycle Test") {
+		t.Fatalf("expected decision in list, out=%q", out)
+	}
+
+	// --list text
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("decide --list text: %v", err)
+	}
+	if !strings.Contains(out, "Lifecycle Test") {
+		t.Fatalf("expected decision in text list, out=%q", out)
+	}
+
+	// --update with --confidence
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--update", "1", "--confidence", "high", "--json"})
+	if err != nil {
+		t.Fatalf("decide --update: %v", err)
+	}
+
+	// --update text
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--update", "1", "--confidence", "low"})
+	if err != nil {
+		t.Fatalf("decide --update text: %v", err)
+	}
+
+	// --delete JSON
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--delete", "1", "--json"})
+	if err != nil {
+		t.Fatalf("decide --delete --json: %v", err)
+	}
+	if !strings.Contains(out, `"archived": true`) {
+		t.Fatalf("expected archived, out=%q", out)
+	}
+
+	// --delete text (non-existent after archive)
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--delete", "1"})
+	if err == nil {
+		t.Fatal("expected error deleting already-archived decision")
+	}
+
+	// --list empty
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("decide --list empty: %v", err)
+	}
+	if !strings.Contains(out, "No active decisions") {
+		t.Fatalf("expected empty list, out=%q", out)
+	}
+}
+
 func TestPatternCommand(t *testing.T) {
 	root := t.TempDir()
 	write := func(path, body string) {

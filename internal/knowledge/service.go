@@ -208,6 +208,68 @@ WHERE id = ?;
 	}, nil
 }
 
+type DecisionListItem struct {
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+	Status     string `json:"status"`
+	Drift      string `json:"drift_status"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func (s *Service) ListDecisions(ctx context.Context) ([]DecisionListItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT d.id, d.title, d.confidence, d.status, COALESCE(e.drift_status, 'ok'), d.updated_at
+FROM decisions d
+LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+WHERE d.status = 'active'
+ORDER BY d.updated_at DESC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions: %w", err)
+	}
+	defer rows.Close()
+	items := []DecisionListItem{}
+	for rows.Next() {
+		var item DecisionListItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Confidence, &item.Status, &item.Drift, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan decision: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) ArchiveDecision(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE decisions SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active';`, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("archive decision: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("decision %d not found or already archived", id)
+	}
+	return nil
+}
+
+func (s *Service) UpdateConfidence(ctx context.Context, id int64, confidence string) error {
+	confidence = strings.TrimSpace(strings.ToLower(confidence))
+	switch confidence {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("confidence must be low, medium, or high")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE decisions SET confidence = ?, updated_at = ? WHERE id = ? AND status = 'active';`, confidence, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("update confidence: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("decision %d not found or archived", id)
+	}
+	return nil
+}
+
 // CheckOutcome is the public version of runCheckOutcome for use by other packages.
 type CheckOutcome struct {
 	Passed   bool

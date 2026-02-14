@@ -183,6 +183,104 @@ func TestRunCheckAndCheckImplementations(t *testing.T) {
 	}
 }
 
+func TestListDecisions(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	// Create a promoted decision first
+	_, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "Use Cobra",
+		Reasoning:       "Better commands",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	items, err := svc.ListDecisions(context.Background())
+	if err != nil {
+		t.Fatalf("ListDecisions: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected decisions")
+	}
+}
+
+func TestArchiveDecision(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "To Archive",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.ArchiveDecision(context.Background(), res.DecisionID)
+	if err != nil {
+		t.Fatalf("ArchiveDecision: %v", err)
+	}
+
+	items, err := svc.ListDecisions(context.Background())
+	if err != nil {
+		t.Fatalf("ListDecisions after archive: %v", err)
+	}
+	for _, item := range items {
+		if item.ID == res.DecisionID {
+			t.Fatal("archived decision should not appear in list")
+		}
+	}
+
+	// Archive non-existent
+	if err := svc.ArchiveDecision(context.Background(), 99999); err == nil {
+		t.Fatal("expected error archiving non-existent decision")
+	}
+}
+
+func TestUpdateConfidence(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "To Update",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.UpdateConfidence(context.Background(), res.DecisionID, "high")
+	if err != nil {
+		t.Fatalf("UpdateConfidence: %v", err)
+	}
+
+	// Invalid confidence
+	if err := svc.UpdateConfidence(context.Background(), res.DecisionID, "invalid"); err == nil {
+		t.Fatal("expected error for invalid confidence")
+	}
+
+	// Non-existent
+	if err := svc.UpdateConfidence(context.Background(), 99999, "low"); err == nil {
+		t.Fatal("expected error for non-existent decision")
+	}
+}
+
 func TestProposeAndVerifyDecisionDBErrors(t *testing.T) {
 	root, conn := setupKnowledgeEnv(t)
 	svc := NewService(conn)
