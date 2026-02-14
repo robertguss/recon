@@ -270,6 +270,28 @@ func (s *Service) UpdateConfidence(ctx context.Context, id int64, confidence str
 	return nil
 }
 
+// DecayConfidenceOnDrift downgrades confidence for decisions with drifting/broken evidence.
+// high -> medium, medium -> low, low stays low. Returns the number of decisions decayed.
+func (s *Service) DecayConfidenceOnDrift(ctx context.Context) (int, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE decisions SET
+    confidence = CASE confidence WHEN 'high' THEN 'medium' WHEN 'medium' THEN 'low' END,
+    updated_at = ?
+WHERE status = 'active'
+  AND confidence IN ('high', 'medium')
+  AND id IN (
+      SELECT entity_id FROM evidence
+      WHERE entity_type = 'decision' AND drift_status IN ('drifting', 'broken')
+  );
+`, now)
+	if err != nil {
+		return 0, fmt.Errorf("decay confidence: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // CheckOutcome is the public version of runCheckOutcome for use by other packages.
 type CheckOutcome struct {
 	Passed   bool

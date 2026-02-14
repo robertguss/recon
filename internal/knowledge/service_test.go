@@ -281,6 +281,74 @@ func TestUpdateConfidence(t *testing.T) {
 	}
 }
 
+func TestConfidenceDecaysOnDrift(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	// Create a high-confidence decision
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "High Confidence",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+		Confidence:      "high",
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	// Manually set evidence to drifting
+	_, err = conn.Exec(`UPDATE evidence SET drift_status = 'drifting' WHERE entity_type = 'decision' AND entity_id = ?`, res.DecisionID)
+	if err != nil {
+		t.Fatalf("set drifting: %v", err)
+	}
+
+	// Run decay
+	decayed, err := svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift: %v", err)
+	}
+	if decayed != 1 {
+		t.Fatalf("expected 1 decayed, got %d", decayed)
+	}
+
+	// Verify confidence went from high -> medium
+	var confidence string
+	if err := conn.QueryRow(`SELECT confidence FROM decisions WHERE id = ?`, res.DecisionID).Scan(&confidence); err != nil {
+		t.Fatalf("query confidence: %v", err)
+	}
+	if confidence != "medium" {
+		t.Fatalf("expected medium after drift decay, got %q", confidence)
+	}
+
+	// Run again — should decay medium -> low
+	decayed, err = svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift second: %v", err)
+	}
+	if decayed != 1 {
+		t.Fatalf("expected 1 decayed second pass, got %d", decayed)
+	}
+	if err := conn.QueryRow(`SELECT confidence FROM decisions WHERE id = ?`, res.DecisionID).Scan(&confidence); err != nil {
+		t.Fatalf("query confidence: %v", err)
+	}
+	if confidence != "low" {
+		t.Fatalf("expected low after second decay, got %q", confidence)
+	}
+
+	// Run again — low can't decay further, should not be counted
+	decayed, err = svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift third: %v", err)
+	}
+	if decayed != 0 {
+		t.Fatalf("expected 0 decayed when already low, got %d", decayed)
+	}
+}
+
 func TestProposeAndVerifyDecisionDBErrors(t *testing.T) {
 	root, conn := setupKnowledgeEnv(t)
 	svc := NewService(conn)
