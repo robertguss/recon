@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/robertguss/recon/internal/db"
@@ -65,6 +66,66 @@ func TestFindExactAmbiguousAndNotFound(t *testing.T) {
 	}
 	if len(nf.Suggestions) == 0 {
 		t.Fatalf("expected suggestions in not found error: %+v", nf)
+	}
+}
+
+func TestFindWithFilters(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	res, err := NewService(conn).Find(context.Background(), "Ambig", QueryOptions{Kind: "method"})
+	if err != nil {
+		t.Fatalf("Find with kind filter error: %v", err)
+	}
+	if res.Symbol.Kind != "method" {
+		t.Fatalf("expected method kind, got %+v", res.Symbol)
+	}
+
+	res, err = NewService(conn).Find(context.Background(), "Ambig", QueryOptions{FilePath: "./other.go"})
+	if err != nil {
+		t.Fatalf("Find with file filter error: %v", err)
+	}
+	if res.Symbol.FilePath != "other.go" {
+		t.Fatalf("expected other.go, got %+v", res.Symbol)
+	}
+
+	_, err = NewService(conn).Find(context.Background(), "Ambig", QueryOptions{PackagePath: "missing"})
+	nf, ok := err.(NotFoundError)
+	if !ok {
+		t.Fatalf("expected filtered NotFoundError, got %T (%v)", err, err)
+	}
+	if !nf.Filtered || len(nf.Suggestions) != 0 {
+		t.Fatalf("expected filtered not-found with empty suggestions, got %+v", nf)
+	}
+	if got := nf.Error(); !strings.Contains(got, "provided filters") {
+		t.Fatalf("expected filtered not-found message, got %q", got)
+	}
+}
+
+func TestQueryOptionHelpers(t *testing.T) {
+	opts := normalizeQueryOptions(QueryOptions{PackagePath: " . ", FilePath: "./pkg/../file.go", Kind: " METHOD "})
+	if opts.PackagePath != "." {
+		t.Fatalf("expected package path '.', got %q", opts.PackagePath)
+	}
+	if opts.FilePath != "file.go" {
+		t.Fatalf("expected normalized file path, got %q", opts.FilePath)
+	}
+	if opts.Kind != "method" {
+		t.Fatalf("expected lowercase kind, got %q", opts.Kind)
+	}
+
+	if !hasActiveFilters(opts) {
+		t.Fatal("expected active filters")
+	}
+	if hasActiveFilters(QueryOptions{}) {
+		t.Fatal("did not expect active filters")
+	}
+
+	if got := normalizeFilePath("  "); got != "" {
+		t.Fatalf("expected empty normalized path, got %q", got)
+	}
+	if got := normalizeFilePath("./a/../b.go"); got != "b.go" {
+		t.Fatalf("expected clean path b.go, got %q", got)
 	}
 }
 

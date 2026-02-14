@@ -41,6 +41,9 @@ func newOrientCommand(app *App) *cobra.Command {
 
 			conn, err := openExistingDB(app)
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 			defer conn.Close()
@@ -48,6 +51,9 @@ func newOrientCommand(app *App) *cobra.Command {
 			syncedInRun := false
 			if syncNow {
 				if err := runOrientSync(cmd.Context(), conn, app.ModuleRoot); err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
 					return err
 				}
 				syncedInRun = true
@@ -55,16 +61,25 @@ func newOrientCommand(app *App) *cobra.Command {
 
 			payload, err := buildOrient(cmd.Context(), conn, app.ModuleRoot)
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 
 			if payload.Freshness.IsStale {
 				if autoSync && !syncedInRun {
 					if err := runOrientSync(cmd.Context(), conn, app.ModuleRoot); err != nil {
+						if jsonOut {
+							return exitJSONCommandError(err)
+						}
 						return err
 					}
 					payload, err = buildOrient(cmd.Context(), conn, app.ModuleRoot)
 					if err != nil {
+						if jsonOut {
+							return exitJSONCommandError(err)
+						}
 						return err
 					}
 				} else if !jsonOut && !app.NoPrompt && isInteractive() {

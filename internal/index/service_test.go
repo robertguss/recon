@@ -222,6 +222,63 @@ func (t T) M() {}
 	}
 }
 
+func TestCollectCallDepsWithContext(t *testing.T) {
+	src := `package p
+import local "example.com/recon/pkg1"
+import local2 "example.com/recon/pkg2"
+
+func F(v thing) {
+	Local()
+	local.External()
+	local2.External()
+	Method()
+	v.Method()
+	(func() {})()
+	time.Now().Format(time.RFC3339)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse source: %v", err)
+	}
+	var fnDecl *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if f, ok := decl.(*ast.FuncDecl); ok {
+			fnDecl = f
+			break
+		}
+	}
+	if fnDecl == nil {
+		t.Fatal("expected function declaration")
+	}
+	deps := collectCallDeps(fnDecl.Body, depContext{
+		PackagePath: ".",
+		LocalImports: map[string]string{
+			"local":  "pkg1",
+			"local2": "pkg2",
+			"time":   "",
+		},
+	})
+
+	want := map[string]depRef{
+		"Local\x00.\x00func":       {Name: "Local", PackagePath: ".", Kind: "func"},
+		"External\x00pkg1\x00func": {Name: "External", PackagePath: "pkg1", Kind: "func"},
+		"External\x00pkg2\x00func": {Name: "External", PackagePath: "pkg2", Kind: "func"},
+		"Method\x00.\x00method":    {Name: "Method", PackagePath: ".", Kind: "method"},
+		"Method\x00.\x00func":      {Name: "Method", PackagePath: ".", Kind: "func"},
+	}
+	if len(deps) != len(want) {
+		t.Fatalf("unexpected dep count %d: %+v", len(deps), deps)
+	}
+	for _, dep := range deps {
+		key := dep.Name + "\x00" + dep.PackagePath + "\x00" + dep.Kind
+		if got, ok := want[key]; !ok || got != dep {
+			t.Fatalf("unexpected dep %q => %+v", key, dep)
+		}
+	}
+}
+
 func TestSyncImportUnquoteFallbackAndAliasLocalImportBranches(t *testing.T) {
 	root := t.TempDir()
 	mustWrite := func(path, body string) {

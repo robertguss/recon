@@ -22,12 +22,18 @@ func newRecallCommand(app *App) *cobra.Command {
 
 			conn, err := openExistingDB(app)
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 			defer conn.Close()
 
 			result, err := recall.NewService(conn).Recall(cmd.Context(), query, recall.RecallOptions{Limit: limit})
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 

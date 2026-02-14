@@ -22,12 +22,18 @@ func newSyncCommand(app *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			conn, err := openExistingDB(app)
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 			defer conn.Close()
 
 			result, err := runSync(cmd.Context(), conn, app.ModuleRoot)
 			if err != nil {
+				if jsonOut {
+					return exitJSONCommandError(err)
+				}
 				return err
 			}
 

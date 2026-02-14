@@ -30,22 +30,26 @@ green, refactor) and finish with 100% test coverage across all packages.
 
 - [x] (2026-02-14 15:45Z) Captured dogfood findings from both `recon` and
       `cortex_code` and defined Milestone 3 hardening scope.
-- [ ] Implement JSON-mode error-envelope consistency for all DB-backed
-      commands, including pre-init failures.
-- [ ] Normalize remaining list-like JSON fields (including `find` not-found
-      suggestions) to arrays (`[]`) instead of `null`.
-- [ ] Validate `find --max-body-lines` input and return stable `invalid_input`
-      errors for invalid values.
-- [ ] Improve `find` dependency precision to avoid false positives from
-      name-only matching across unrelated symbols.
-- [ ] Add `find` disambiguation filters for common-symbol workflows in large
-      repos (package/file/kind narrowing).
-- [ ] Prevent decision persistence on `invalid_input` failures (do not create
-      pending proposals for unsupported or malformed checks).
-- [ ] Add and update tests in red/green/refactor order for all changed paths.
-- [ ] Run `go test ./...` and `go test ./... -coverprofile=coverage.out` and
-      confirm total coverage remains `100.0%`.
-- [ ] Update this document’s living sections throughout implementation.
+- [x] (2026-02-14 16:33Z) Implemented JSON-mode error-envelope consistency for
+      all DB-backed commands (`orient`, `find`, `decide`, `recall`, `sync`),
+      including pre-init failures.
+- [x] (2026-02-14 16:33Z) Normalized remaining list-like JSON fields:
+      `find` not-found `suggestions` now serialize as `[]`.
+- [x] (2026-02-14 16:33Z) Added `find --max-body-lines` validation with stable
+      `invalid_input` envelopes in JSON mode and exit-2 text errors.
+- [x] (2026-02-14 16:33Z) Improved dependency precision by indexing dependency
+      package/kind context and excluding external-selector false positives.
+- [x] (2026-02-14 16:33Z) Added `find` disambiguation filters:
+      `--package`, `--file`, and `--kind` with deterministic filtered errors.
+- [x] (2026-02-14 16:33Z) Prevented `decide` persistence on unsupported
+      `check_type` invalid input (`proposal`/`evidence` rows remain unchanged).
+- [x] (2026-02-14 16:33Z) Added failing tests first, then green/refactor tests
+      for each milestone behavior.
+- [x] (2026-02-14 16:33Z) Ran `go test ./...` and
+      `go test ./... -coverprofile=coverage.out`; confirmed total coverage
+      `100.0%`.
+- [x] (2026-02-14 16:33Z) Updated living sections (`Progress`,
+      `Surprises & Discoveries`, `Decision Log`, `Outcomes`).
 
 ## Surprises & Discoveries
 
@@ -70,6 +74,11 @@ green, refactor) and finish with 100% test coverage across all packages.
 - Observation: common symbol names are frequently ambiguous in large repos.
   Evidence: `find NewService` in `cortex_code` returned 9 candidates, creating
   manual triage overhead without narrowing flags.
+- Observation: selector calls to external imports (`time.Now`) can be
+  misidentified as in-project deps unless import aliases are tracked.
+  Evidence: while implementing precision tests, `Now` appeared as a false dep
+  until import aliases were recorded (external aliases map to empty package and
+  are ignored for dependency materialization).
 
 ## Decision Log
 
@@ -89,16 +98,95 @@ green, refactor) and finish with 100% test coverage across all packages.
   symbols in large repos. Rationale: ambiguity is normal at scale; the CLI must
   offer first-class narrowing rather than forcing manual retries.
   Date/Author: 2026-02-14 / Codex
+- Decision: encode DB pre-init failures as `not_initialized` (not
+  `internal_error`) in the shared JSON envelope helper. Rationale: gives
+  deterministic machine semantics for recoverable setup issues.
+  Date/Author: 2026-02-14 / Codex
+- Decision: persist dependency context (`dep_package`, `dep_kind`) in
+  `symbol_deps` instead of only `dep_name`. Rationale: enables precise
+  dependency joins and prevents routine cross-package false positives.
+  Date/Author: 2026-02-14 / Codex
 
 ## Outcomes & Retrospective
 
-Milestone 3 is not implemented yet. Success means dogfood behavior is stable and
-predictable on both small and large repositories, with no regression to
-Milestone 1/2 workflows and total coverage maintained at `100.0%`.
+Milestone 3 is implemented and validated.
 
-This section must be updated at completion with before/after behavior evidence,
-including at least one real-repo run from `cortex_code` proving improved
-`find` precision and JSON consistency.
+Before/after evidence:
+
+- Pre-init JSON envelope consistency now holds across DB-backed commands:
+
+```shell
+$ /tmp/recon-dogfood find Missing --json
+{
+  "error": {
+    "code": "not_initialized",
+    "details": { "path": ".../.recon/recon.db" }
+  }
+}
+```
+
+- `find` not-found JSON list normalization:
+
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find DefinitelyMissingSymbol --json)
+{
+  "error": {
+    "code": "not_found",
+    "details": {
+      "suggestions": []
+    }
+  }
+}
+```
+
+- `find` dependency precision on real repo (`cortex_code`):
+
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find GenerateSessionID --json)
+# dependencies length = 0 (no unrelated local Format methods)
+```
+
+- `find` disambiguation filters:
+
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find NewService --json)
+# ambiguous (9 candidates)
+```
+
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find NewService --package internal/session --json)
+# single symbol result (resolved)
+```
+
+- `decide` invalid-input non-persistence in real repo (`cortex_code`):
+
+```sql
+$ sqlite3 .recon/recon.db 'select count(*) from proposals;'
+0
+```
+
+```shell
+$ /tmp/recon-dogfood decide "invalid" --reasoning r --evidence-summary e --check-type nope --check-spec '{}' --json
+# invalid_input
+```
+
+```sql
+$ sqlite3 .recon/recon.db 'select count(*) from proposals;'
+0
+```
+
+Test/coverage validation:
+
+```shell
+go test ./...
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
+total: (statements) 100.0%
+```
+
+Milestone outcomes match the purpose: predictable JSON contracts, stricter input
+validation, improved find result quality at scale, and no invalid-input state
+mutation regressions.
 
 ## Context and Orientation
 
@@ -295,3 +383,7 @@ At completion, these interfaces/behaviors must exist:
 
 Revision note (2026-02-14): Created this plan from direct dogfooding findings in
 `recon` and `cortex_code` to guide the next reliability-focused milestone.
+
+Revision note (2026-02-14): Updated after implementation completion with
+executed red/green/refactor test evidence, real-repo (`cortex_code`) dogfood
+results, final coverage confirmation (`100.0%`), and finalized decisions.

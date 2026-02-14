@@ -277,3 +277,83 @@ func TestRunMigrationsInjectedErrors(t *testing.T) {
 		t.Fatalf("expected ErrNoChange to be ignored, got %v", err)
 	}
 }
+
+func TestRunMigrationsUpgradesLegacySymbolDepsSchema(t *testing.T) {
+	root := t.TempDir()
+	conn, err := Open(filepath.Join(root, "legacy.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Exec(`
+CREATE TABLE symbols (
+    id INTEGER PRIMARY KEY
+);
+CREATE TABLE symbol_deps (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    dep_name TEXT NOT NULL,
+    UNIQUE(symbol_id, dep_name)
+);
+CREATE TABLE schema_migrations (version uint64, dirty bool);
+INSERT INTO schema_migrations (version, dirty) VALUES (1, 0);
+INSERT INTO symbols (id) VALUES (1);
+INSERT INTO symbol_deps (id, symbol_id, dep_name) VALUES (1, 1, 'Helper');
+`); err != nil {
+		t.Fatalf("seed legacy schema: %v", err)
+	}
+
+	if err := RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations upgrade: %v", err)
+	}
+
+	colRows, err := conn.Query(`PRAGMA table_info(symbol_deps);`)
+	if err != nil {
+		t.Fatalf("table_info symbol_deps: %v", err)
+	}
+	defer colRows.Close()
+
+	cols := map[string]bool{}
+	for colRows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := colRows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan table_info row: %v", err)
+		}
+		cols[name] = true
+	}
+	if err := colRows.Err(); err != nil {
+		t.Fatalf("iterate table_info rows: %v", err)
+	}
+	if !cols["dep_package"] || !cols["dep_kind"] {
+		t.Fatalf("expected dep_package and dep_kind columns, got %#v", cols)
+	}
+
+	var depPackage, depKind string
+	if err := conn.QueryRow(`SELECT dep_package, dep_kind FROM symbol_deps WHERE id = 1;`).Scan(&depPackage, &depKind); err != nil {
+		t.Fatalf("query migrated dep columns: %v", err)
+	}
+	if depPackage != "" || depKind != "" {
+		t.Fatalf("expected migrated dep columns to default empty strings, got package=%q kind=%q", depPackage, depKind)
+	}
+
+	if _, err := conn.Exec(`
+INSERT INTO symbol_deps (symbol_id, dep_name, dep_package, dep_kind)
+VALUES (1, 'Helper', 'internal/util', 'func');
+`); err != nil {
+		t.Fatalf("expected extended unique key to allow contextual duplicate, got %v", err)
+	}
+	if _, err := conn.Exec(`
+INSERT INTO symbol_deps (symbol_id, dep_name, dep_package, dep_kind)
+VALUES (1, 'Helper', 'internal/util', 'func');
+`); err == nil {
+		t.Fatal("expected duplicate contextual dependency insert to fail")
+	}
+}

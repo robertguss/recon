@@ -43,8 +43,7 @@ func newDecideCommand(app *App) *cobra.Command {
 			conn, err := openExistingDB(app)
 			if err != nil {
 				if jsonOut {
-					_ = writeJSONError("internal_error", err.Error(), nil)
-					return ExitError{Code: 2}
+					return exitJSONCommandError(err)
 				}
 				return err
 			}
@@ -125,6 +124,9 @@ func buildCheckSpec(checkType string, checkSpec string, checkPath string, checkS
 		return "", fmt.Errorf("cannot combine --check-spec with typed check flags")
 	}
 	if checkSpec != "" {
+		if !supportedCheckType(checkType) {
+			return "", fmt.Errorf("unsupported check type %q", checkType)
+		}
 		return checkSpec, nil
 	}
 	if !typedProvided {
@@ -165,6 +167,15 @@ func buildCheckSpec(checkType string, checkSpec string, checkPath string, checkS
 		}{Pattern: checkPattern, Scope: checkScope})
 	default:
 		return "", fmt.Errorf("unsupported check type %q", checkType)
+	}
+}
+
+func supportedCheckType(checkType string) bool {
+	switch checkType {
+	case "file_exists", "symbol_exists", "grep_pattern":
+		return true
+	default:
+		return false
 	}
 }
 

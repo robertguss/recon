@@ -9,11 +9,19 @@ import (
 	"github.com/robertguss/recon/internal/db"
 )
 
+type dbNotInitializedError struct {
+	Path string
+}
+
+func (e dbNotInitializedError) Error() string {
+	return fmt.Sprintf("database not initialized at %s; run `recon init` first", e.Path)
+}
+
 func openExistingDB(app *App) (*sql.DB, error) {
 	path := db.DBPath(app.ModuleRoot)
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("database not initialized at %s; run `recon init` first", path)
+			return nil, dbNotInitializedError{Path: path}
 		}
 		return nil, fmt.Errorf("stat db file: %w", err)
 	}
