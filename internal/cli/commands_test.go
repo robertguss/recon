@@ -14,9 +14,13 @@ import (
 
 	"github.com/robertguss/recon/internal/index"
 	"github.com/robertguss/recon/internal/orient"
+	"github.com/spf13/cobra"
 )
 
-func runCommandWithCapture(t *testing.T, cmd interface{ SetArgs([]string); ExecuteContext(context.Context) error }, args []string) (string, string, error) {
+func runCommandWithCapture(t *testing.T, cmd interface {
+	SetArgs([]string)
+	ExecuteContext(context.Context) error
+}, args []string) (string, string, error) {
 	t.Helper()
 	origOut := os.Stdout
 	origErr := os.Stderr
@@ -194,7 +198,7 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 		t.Fatalf("decide promoted failed out=%q err=%v", out, err)
 	}
 	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"Pending", "--reasoning", "because", "--evidence-summary", "missing", "--check-type", "file_exists", "--check-spec", `{"path":"missing"}`, "--json"})
-	if err == nil || !strings.Contains(out, "\"verification_passed\": false") {
+	if err == nil || !strings.Contains(out, `"code": "verification_failed"`) {
 		t.Fatalf("decide pending json failed out=%q err=%v", out, err)
 	}
 	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"Pending text", "--reasoning", "because", "--evidence-summary", "missing", "--check-type", "file_exists", "--check-spec", `{"path":"missing"}`})
@@ -429,7 +433,9 @@ func TestCommandErrorBranches(t *testing.T) {
 		t.Fatal("expected orient sync error branch")
 	}
 
-	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) { return orient.Payload{}, errors.New("build fail first") }
+	buildOrient = func(context.Context, *sql.DB, string) (orient.Payload, error) {
+		return orient.Payload{}, errors.New("build fail first")
+	}
 	if _, _, err := runCommandWithCapture(t, newOrientCommand(app4), nil); err == nil {
 		t.Fatal("expected orient initial build error branch")
 	}
@@ -610,5 +616,208 @@ func TestOrientCommandMachineFlags(t *testing.T) {
 	}
 	if stderr != "" || !strings.Contains(out, "\"freshness\"") {
 		t.Fatalf("expected strict json-only output, out=%q stderr=%q", out, stderr)
+	}
+}
+
+func TestOrientJSONEmptyLists(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newOrientCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("orient --json: %v", err)
+	}
+	if !strings.Contains(out, `"modules": []`) {
+		t.Fatalf("expected modules empty array, out=%q", out)
+	}
+	if !strings.Contains(out, `"active_decisions": []`) {
+		t.Fatalf("expected active_decisions empty array, out=%q", out)
+	}
+}
+
+func TestDecideTypedCheckFlags(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"typed file", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
+	})
+	if err != nil || !strings.Contains(out, `"promoted": true`) {
+		t.Fatalf("expected typed file check success, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"typed symbol", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "symbol_exists", "--check-symbol", "Alpha", "--json",
+	})
+	if err != nil || !strings.Contains(out, `"promoted": true`) {
+		t.Fatalf("expected typed symbol check success, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"typed pattern", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "grep_pattern", "--check-pattern", "package", "--json",
+	})
+	if err != nil || !strings.Contains(out, `"promoted": true`) {
+		t.Fatalf("expected typed pattern check success, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"typed conflict", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--check-spec", `{"path":"go.mod"}`, "--json",
+	})
+	if err == nil || !strings.Contains(out, `"code": "invalid_input"`) {
+		t.Fatalf("expected typed/raw conflict error envelope, out=%q err=%v", out, err)
+	}
+}
+
+func TestJSONErrorEnvelope(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Ambig", "--json"})
+	if err == nil || !strings.Contains(out, `"code": "ambiguous"`) {
+		t.Fatalf("expected ambiguous envelope, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"Al", "--json"})
+	if err == nil || !strings.Contains(out, `"code": "not_found"`) {
+		t.Fatalf("expected not_found envelope, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"verification failed", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-spec", `{"path":"missing"}`, "--json",
+	})
+	if err == nil || !strings.Contains(out, `"code": "verification_failed"`) {
+		t.Fatalf("expected verification_failed envelope, out=%q err=%v", out, err)
+	}
+
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"invalid check type", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "nope", "--check-spec", `{}`, "--json",
+	})
+	if err == nil || !strings.Contains(out, `"code": "invalid_input"`) {
+		t.Fatalf("expected invalid_input envelope, out=%q err=%v", out, err)
+	}
+}
+
+func TestFindBodyFlags(t *testing.T) {
+	root := t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	write("go.mod", "module example.com/recon\n")
+	write("main.go", `package main
+
+func Alpha() {
+	lineOne()
+	lineTwo()
+	lineThree()
+}
+
+func lineOne() {}
+func lineTwo() {}
+func lineThree() {}
+`)
+
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Alpha", "--no-body"})
+	if err != nil {
+		t.Fatalf("find --no-body: %v", err)
+	}
+	if strings.Contains(out, "\nBody:\n") {
+		t.Fatalf("expected body omitted, out=%q", out)
+	}
+
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"Alpha", "--max-body-lines", "2"})
+	if err != nil {
+		t.Fatalf("find --max-body-lines: %v", err)
+	}
+	if !strings.Contains(out, "\nBody:\n") || !strings.Contains(out, "... (truncated)") {
+		t.Fatalf("expected truncated body marker, out=%q", out)
+	}
+}
+
+func TestNoPromptDisablesOrientPrompt(t *testing.T) {
+	root := setupModuleRoot(t)
+
+	origGetwd := osGetwd
+	origFind := findModuleRoot
+	origInteractive := isInteractive
+	origAsk := askYesNo
+	defer func() {
+		osGetwd = origGetwd
+		findModuleRoot = origFind
+		isInteractive = origInteractive
+		askYesNo = origAsk
+	}()
+
+	osGetwd = func() (string, error) { return root, nil }
+	findModuleRoot = func(string) (string, error) { return root, nil }
+
+	newRoot := func(t *testing.T) *cobra.Command {
+		t.Helper()
+		cmd, err := NewRootCommand(context.Background())
+		if err != nil {
+			t.Fatalf("new root: %v", err)
+		}
+		return cmd
+	}
+
+	if _, _, err := runCommandWithCapture(t, newRoot(t), []string{"init"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newRoot(t), []string{"sync"}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Alpha(){ }\n"), 0o644); err != nil {
+		t.Fatalf("touch main.go: %v", err)
+	}
+
+	promptCalls := 0
+	isInteractive = func() bool { return true }
+	askYesNo = func(string, bool) (bool, error) {
+		promptCalls++
+		return true, nil
+	}
+
+	if _, _, err := runCommandWithCapture(t, newRoot(t), []string{"--no-prompt", "orient"}); err != nil {
+		t.Fatalf("orient --no-prompt: %v", err)
+	}
+	if promptCalls != 0 {
+		t.Fatalf("expected no prompt calls, got %d", promptCalls)
 	}
 }

@@ -29,22 +29,24 @@ packages.
 
 - [x] (2026-02-14 04:35Z) Created this Milestone 2 ExecPlan and captured scope,
       architecture edits, and acceptance criteria.
-- [ ] Implement JSON output normalization so array-like fields serialize as `[]`
-      instead of `null`.
-- [ ] Implement typed `decide` check flags that generate `--check-spec`
-      internally for supported checks.
-- [ ] Implement a standard JSON error envelope for command execution failures in
-      JSON mode.
-- [ ] Implement `find` output controls for body verbosity (`--no-body`,
-      `--max-body-lines`).
-- [ ] Implement root-level `--no-prompt` behavior and wire it into `orient`
-      prompt logic.
-- [ ] Add and update tests in red/green/refactor order for every changed path.
-- [ ] Run `go test ./...` and `go test ./... -coverprofile=coverage.out` and
-      confirm total coverage remains 100%.
-- [ ] Update this document’s `Progress`, `Surprises & Discoveries`,
-      `Decision Log`, and `Outcomes & Retrospective` sections as implementation
-      proceeds.
+- [x] (2026-02-14 06:02Z) Implemented JSON output normalization so array-like
+      fields serialize as `[]` instead of `null`.
+- [x] (2026-02-14 06:05Z) Implemented typed `decide` check flags that generate
+      `--check-spec` internally for supported checks.
+- [x] (2026-02-14 06:07Z) Implemented a standard JSON error envelope for
+      command execution failures in JSON mode.
+- [x] (2026-02-14 06:08Z) Implemented `find` output controls for body verbosity
+      (`--no-body`, `--max-body-lines`).
+- [x] (2026-02-14 06:09Z) Implemented root-level `--no-prompt` behavior and
+      wired it into `orient` prompt logic.
+- [x] (2026-02-14 06:16Z) Added and updated tests in red/green/refactor order
+      for every changed path, including new helper-path coverage tests.
+- [x] (2026-02-14 06:19Z) Ran `go test ./...` and
+      `go test ./... -coverprofile=coverage.out`, confirming total coverage
+      remains `100.0%`.
+- [x] (2026-02-14 06:20Z) Updated this document’s `Progress`,
+      `Surprises & Discoveries`, `Decision Log`, and
+      `Outcomes & Retrospective` sections.
 
 ## Surprises & Discoveries
 
@@ -60,6 +62,14 @@ packages.
   controls are worth extending. Evidence: End-to-end run showed stale
   `orient --json-strict` emits JSON only and `orient --auto-sync --json`
   refreshed freshness state immediately.
+- Observation: `symbol_exists` verification inside an open transaction can
+  block indefinitely with SQLite when max open connections is `1`.
+  Evidence: `TestDecideTypedCheckFlags` timed out with stack traces blocked in
+  `runSymbolExists` while waiting on `database/sql.(*DB).conn`.
+- Observation: Raising CLI ergonomic branches increased uncovered statements in
+  `internal/cli` even though behavior was correct.
+  Evidence: initial post-change coverage dropped to `99.6%` total and required
+  targeted branch tests to restore `100.0%`.
 
 ## Decision Log
 
@@ -79,14 +89,35 @@ packages.
   behavior even on a TTY. Rationale: CI and agent environments need
   deterministic behavior regardless of pseudo-terminal availability.
   Date/Author: 2026-02-14 / Codex
+- Decision: JSON mode uses envelope codes `invalid_input` for unsupported or
+  malformed checks and `verification_failed` for check failures that ran
+  successfully. Rationale: callers can distinguish user-fixable input issues
+  from true verification outcomes without parsing free-form text.
+  Date/Author: 2026-02-14 / Codex
+- Decision: Move decision verification execution before transaction creation in
+  `knowledge.Service.ProposeAndVerifyDecision`. Rationale: avoids SQLite
+  connection starvation/deadlock for checks that query using the same pool
+  (`symbol_exists`) while preserving the existing persisted proposal/evidence
+  outcomes. Date/Author: 2026-02-14 / Codex
 
 ## Outcomes & Retrospective
 
-Milestone 2 is not implemented yet. Success means the CLI is measurably easier
-to automate and less error-prone, with no regression in core behaviors from
-Milestone 1 and test coverage maintained at 100%. This section must be updated
-at milestone completion with concrete before/after behaviors and any deferred
-items.
+Milestone 2 is complete. The CLI now emits stable array fields for empty orient
+lists, supports typed decision check flags that remove JSON shell quoting for
+common checks, emits a standard JSON error envelope for JSON-mode command
+failures, supports `find --no-body` and `find --max-body-lines`, and honors a
+global `--no-prompt` flag that suppresses interactive prompts deterministically.
+
+Validation was completed with new and existing tests, including targeted red and
+green runs for each milestone behavior and full-suite verification. Final test
+and coverage commands:
+
+    go test ./...
+    go test ./... -coverprofile=coverage.out
+    go tool cover -func=coverage.out
+
+All packages and total statements report `100.0%` coverage. No deferred items
+remain for Milestone 2.
 
 ## Context and Orientation
 
@@ -339,3 +370,6 @@ statement coverage.
 Revision note (2026-02-14): Created this plan to close the five operator and
 agent UX gaps discovered during post-feature CLI dogfooding after adding
 `orient --sync`, `--auto-sync`, and `--json-strict`.
+Revision note (2026-02-14): Updated after implementation to record completion
+status, discovered SQLite verification deadlock risk, final command/error
+contract decisions, and 100% coverage validation evidence.

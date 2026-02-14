@@ -67,7 +67,7 @@ func newOrientCommand(app *App) *cobra.Command {
 					if err != nil {
 						return err
 					}
-				} else if !jsonOut && isInteractive() {
+				} else if !jsonOut && !app.NoPrompt && isInteractive() {
 					runSync, err := askYesNo("Index looks stale. Run recon sync now? [Y/n]: ", true)
 					if err != nil {
 						return fmt.Errorf("read stale prompt: %w", err)

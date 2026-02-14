@@ -16,6 +16,26 @@ func writeJSON(v any) error {
 	return enc.Encode(v)
 }
 
+type jsonErrorEnvelope struct {
+	Error jsonErrorBody `json:"error"`
+}
+
+type jsonErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
+}
+
+func writeJSONError(code string, message string, details any) error {
+	return writeJSON(jsonErrorEnvelope{
+		Error: jsonErrorBody{
+			Code:    code,
+			Message: message,
+			Details: details,
+		},
+	})
+}
+
 func isInteractiveTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }

@@ -17,6 +17,7 @@ var (
 type App struct {
 	Context    context.Context
 	ModuleRoot string
+	NoPrompt   bool
 }
 
 func NewRootCommand(ctx context.Context) (*cobra.Command, error) {
@@ -38,6 +39,7 @@ func NewRootCommand(ctx context.Context) (*cobra.Command, error) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.PersistentFlags().BoolVar(&app.NoPrompt, "no-prompt", false, "Disable interactive prompts globally")
 
 	root.AddCommand(newInitCommand(app))
 	root.AddCommand(newSyncCommand(app))

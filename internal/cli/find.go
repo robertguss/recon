@@ -2,13 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/robertguss/recon/internal/find"
 	"github.com/spf13/cobra"
 )
 
 func newFindCommand(app *App) *cobra.Command {
-	var jsonOut bool
+	var (
+		jsonOut      bool
+		noBody       bool
+		maxBodyLines int
+	)
 
 	cmd := &cobra.Command{
 		Use:   "find <symbol>",
@@ -22,40 +27,52 @@ func newFindCommand(app *App) *cobra.Command {
 			}
 			defer conn.Close()
 
-				result, err := find.NewService(conn).FindExact(cmd.Context(), symbol)
-				if err != nil {
-					switch e := err.(type) {
-					case find.NotFoundError:
-						if jsonOut {
-							_ = writeJSON(map[string]any{"error": "not_found", "symbol": symbol, "suggestions": e.Suggestions})
-						} else {
-							fmt.Printf("symbol %q not found\n", symbol)
-							if len(e.Suggestions) > 0 {
-								fmt.Println("Suggestions:")
-								for _, suggestion := range e.Suggestions {
-									fmt.Printf("- %s\n", suggestion)
-								}
+			result, err := find.NewService(conn).FindExact(cmd.Context(), symbol)
+			if err != nil {
+				switch e := err.(type) {
+				case find.NotFoundError:
+					if jsonOut {
+						details := map[string]any{
+							"symbol":      symbol,
+							"suggestions": e.Suggestions,
+						}
+						_ = writeJSONError("not_found", e.Error(), details)
+					} else {
+						fmt.Printf("symbol %q not found\n", symbol)
+						if len(e.Suggestions) > 0 {
+							fmt.Println("Suggestions:")
+							for _, suggestion := range e.Suggestions {
+								fmt.Printf("- %s\n", suggestion)
 							}
 						}
-						return ExitError{Code: 2}
-					case find.AmbiguousError:
-						if jsonOut {
-							_ = writeJSON(map[string]any{"error": "ambiguous", "symbol": symbol, "candidates": e.Candidates})
-						} else {
-							fmt.Printf("symbol %q is ambiguous (%d candidates)\n", symbol, len(e.Candidates))
-							for _, candidate := range e.Candidates {
-								label := symbol
-								if candidate.Receiver != "" {
-									label = candidate.Receiver + "." + symbol
-								}
-								fmt.Printf("- %s %s (%s, pkg %s)\n", candidate.Kind, label, candidate.FilePath, candidate.Package)
-							}
-						}
-						return ExitError{Code: 2}
-					default:
-						return err
 					}
+					return ExitError{Code: 2}
+				case find.AmbiguousError:
+					if jsonOut {
+						details := map[string]any{
+							"symbol":     symbol,
+							"candidates": e.Candidates,
+						}
+						_ = writeJSONError("ambiguous", e.Error(), details)
+					} else {
+						fmt.Printf("symbol %q is ambiguous (%d candidates)\n", symbol, len(e.Candidates))
+						for _, candidate := range e.Candidates {
+							label := symbol
+							if candidate.Receiver != "" {
+								label = candidate.Receiver + "." + symbol
+							}
+							fmt.Printf("- %s %s (%s, pkg %s)\n", candidate.Kind, label, candidate.FilePath, candidate.Package)
+						}
+					}
+					return ExitError{Code: 2}
+				default:
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
 				}
+			}
 
 			if jsonOut {
 				return writeJSON(result)
@@ -66,8 +83,10 @@ func newFindCommand(app *App) *cobra.Command {
 			if result.Symbol.Receiver != "" {
 				fmt.Printf("Receiver: %s\n", result.Symbol.Receiver)
 			}
-			fmt.Println("\nBody:")
-			fmt.Println(result.Symbol.Body)
+			if !noBody {
+				fmt.Println("\nBody:")
+				fmt.Println(truncateBody(result.Symbol.Body, maxBodyLines))
+			}
 			fmt.Println("\nDirect dependencies:")
 			if len(result.Dependencies) == 0 {
 				fmt.Println("- (none)")
@@ -81,5 +100,18 @@ func newFindCommand(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
+	cmd.Flags().BoolVar(&noBody, "no-body", false, "Omit symbol body in text output")
+	cmd.Flags().IntVar(&maxBodyLines, "max-body-lines", 0, "Maximum symbol body lines in text output (0 = no limit)")
 	return cmd
+}
+
+func truncateBody(body string, maxLines int) string {
+	if maxLines <= 0 {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) <= maxLines {
+		return body
+	}
+	return strings.Join(append(lines[:maxLines], "... (truncated)"), "\n")
 }
