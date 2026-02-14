@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
+	"strings"
 )
 
 type Symbol struct {
@@ -24,6 +26,12 @@ type Result struct {
 	Dependencies []Symbol `json:"dependencies"`
 }
 
+type QueryOptions struct {
+	PackagePath string `json:"package,omitempty"`
+	FilePath    string `json:"file,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+}
+
 type Candidate struct {
 	Kind     string `json:"kind"`
 	Receiver string `json:"receiver,omitempty"`
@@ -34,9 +42,14 @@ type Candidate struct {
 type NotFoundError struct {
 	Symbol      string
 	Suggestions []string
+	Filtered    bool
+	Filters     QueryOptions
 }
 
 func (e NotFoundError) Error() string {
+	if e.Filtered {
+		return fmt.Sprintf("symbol %q not found with provided filters", e.Symbol)
+	}
 	if len(e.Suggestions) == 0 {
 		return fmt.Sprintf("symbol %q not found", e.Symbol)
 	}
@@ -61,6 +74,13 @@ func NewService(conn *sql.DB) *Service {
 }
 
 func (s *Service) FindExact(ctx context.Context, symbol string) (Result, error) {
+	return s.Find(ctx, symbol, QueryOptions{})
+}
+
+func (s *Service) Find(ctx context.Context, symbol string, opts QueryOptions) (Result, error) {
+	opts = normalizeQueryOptions(opts)
+	filtersApplied := hasActiveFilters(opts)
+
 	rows, err := s.db.QueryContext(ctx, `
 SELECT s.id, s.kind, s.name, COALESCE(s.signature, ''), COALESCE(s.body, ''),
        s.line_start, s.line_end, COALESCE(s.receiver, ''), f.path, COALESCE(p.path, '.')
@@ -106,6 +126,13 @@ ORDER BY p.path, f.path, s.kind, s.receiver;
 		return Result{}, NotFoundError{Symbol: symbol, Suggestions: suggestions}
 	}
 
+	if filtersApplied {
+		matches = filterMatches(matches, opts)
+		if len(matches) == 0 {
+			return Result{}, NotFoundError{Symbol: symbol, Suggestions: []string{}, Filtered: true, Filters: opts}
+		}
+	}
+
 	if len(matches) > 1 {
 		candidates := make([]Candidate, 0, len(matches))
 		for _, m := range matches {
@@ -128,6 +155,47 @@ ORDER BY p.path, f.path, s.kind, s.receiver;
 	return Result{Symbol: sym, Dependencies: deps}, nil
 }
 
+func normalizeQueryOptions(opts QueryOptions) QueryOptions {
+	normalized := QueryOptions{
+		PackagePath: strings.TrimSpace(opts.PackagePath),
+		FilePath:    normalizeFilePath(opts.FilePath),
+		Kind:        strings.ToLower(strings.TrimSpace(opts.Kind)),
+	}
+	if normalized.PackagePath == "" {
+		normalized.PackagePath = strings.TrimSpace(opts.PackagePath)
+	}
+	return normalized
+}
+
+func normalizeFilePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(trimmed))
+}
+
+func hasActiveFilters(opts QueryOptions) bool {
+	return opts.PackagePath != "" || opts.FilePath != "" || opts.Kind != ""
+}
+
+func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
+	filtered := make([]Symbol, 0, len(matches))
+	for _, match := range matches {
+		if opts.PackagePath != "" && match.Package != opts.PackagePath {
+			continue
+		}
+		if opts.FilePath != "" && normalizeFilePath(match.FilePath) != opts.FilePath {
+			continue
+		}
+		if opts.Kind != "" && strings.ToLower(match.Kind) != opts.Kind {
+			continue
+		}
+		filtered = append(filtered, match)
+	}
+	return filtered
+}
+
 func (s *Service) suggestions(ctx context.Context, symbol string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT DISTINCT name
@@ -141,7 +209,7 @@ LIMIT 5;
 	}
 	defer rows.Close()
 
-	var out []string
+	out := make([]string, 0, 5)
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -164,6 +232,8 @@ JOIN symbols s2 ON s2.name = d.dep_name
 JOIN files f2 ON f2.id = s2.file_id
 LEFT JOIN packages p2 ON p2.id = f2.package_id
 WHERE d.symbol_id = ?
+  AND (d.dep_package = '' OR COALESCE(p2.path, '.') = d.dep_package)
+  AND (d.dep_kind = '' OR s2.kind = d.dep_kind)
 ORDER BY p2.path, f2.path, s2.name
 LIMIT 25;
 `, symbolID)

@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -130,6 +131,8 @@ VALUES (?, ?, 'go', ?, ?, ?, ?);
 			return SyncResult{}, fmt.Errorf("read file id: %w", err)
 		}
 
+		localImportAliases := map[string]string{}
+
 		for _, imp := range parsed.Imports {
 			toPath, err := importPathUnquote(imp.Path.Value)
 			if err != nil {
@@ -138,10 +141,13 @@ VALUES (?, ?, 'go', ?, ?, ?, ?);
 			alias := ""
 			if imp.Name != nil {
 				alias = imp.Name.Name
+			} else {
+				alias = path.Base(toPath)
 			}
 
 			importType := "external"
 			var toPkgID any
+			localPkgPath := ""
 			if toPath == modulePath || strings.HasPrefix(toPath, modulePath+"/") {
 				importType = "local"
 				rel := strings.TrimPrefix(toPath, modulePath)
@@ -149,9 +155,13 @@ VALUES (?, ?, 'go', ?, ?, ?, ?);
 				if rel == "" {
 					rel = "."
 				}
+				localPkgPath = rel
 				if localStats, ok := packageStats[rel]; ok {
 					toPkgID = localStats.ID
 				}
+			}
+			if alias != "" && alias != "_" && alias != "." {
+				localImportAliases[alias] = localPkgPath
 			}
 
 			if _, err := tx.ExecContext(ctx, `
@@ -167,7 +177,10 @@ ON CONFLICT(from_file_id, to_path) DO UPDATE SET
 		}
 
 		for _, decl := range parsed.Decls {
-			records := symbolRecordsFromDecl(fset, file.Content, decl)
+			records := symbolRecordsFromDeclWithContext(fset, file.Content, decl, depContext{
+				PackagePath:  pkgPath,
+				LocalImports: localImportAliases,
+			})
 			for _, rec := range records {
 				if _, err := tx.ExecContext(ctx, `
 INSERT INTO symbols (file_id, kind, name, signature, body, line_start, line_end, exported, receiver)
@@ -190,12 +203,12 @@ SELECT id FROM symbols WHERE file_id = ? AND kind = ? AND name = ? AND receiver 
 				}
 				symbolCount++
 
-				for _, dep := range rec.DepNames {
+				for _, dep := range rec.DepRefs {
 					if _, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO symbol_deps (symbol_id, dep_name)
-VALUES (?, ?);
-`, symbolID, dep); err != nil {
-						return SyncResult{}, fmt.Errorf("insert symbol dep %s: %w", dep, err)
+INSERT OR IGNORE INTO symbol_deps (symbol_id, dep_name, dep_package, dep_kind)
+VALUES (?, ?, ?, ?);
+`, symbolID, dep.Name, dep.PackagePath, dep.Kind); err != nil {
+						return SyncResult{}, fmt.Errorf("insert symbol dep %s: %w", dep.Name, err)
 					}
 				}
 			}
@@ -246,10 +259,25 @@ type symbolRecord struct {
 	LineEnd   int
 	Exported  bool
 	Receiver  string
-	DepNames  []string
+	DepRefs   []depRef
+}
+
+type depRef struct {
+	Name        string
+	PackagePath string
+	Kind        string
+}
+
+type depContext struct {
+	PackagePath  string
+	LocalImports map[string]string
 }
 
 func symbolRecordsFromDecl(fset *token.FileSet, src []byte, decl ast.Decl) []symbolRecord {
+	return symbolRecordsFromDeclWithContext(fset, src, decl, depContext{})
+}
+
+func symbolRecordsFromDeclWithContext(fset *token.FileSet, src []byte, decl ast.Decl, ctx depContext) []symbolRecord {
 	records := make([]symbolRecord, 0, 4)
 
 	switch d := decl.(type) {
@@ -263,7 +291,7 @@ func symbolRecordsFromDecl(fset *token.FileSet, src []byte, decl ast.Decl) []sym
 			LineEnd:   fset.Position(d.End()).Line,
 			Exported:  ast.IsExported(d.Name.Name),
 			Receiver:  receiverName(d),
-			DepNames:  collectCallNames(d.Body),
+			DepRefs:   collectCallDeps(d.Body, ctx),
 		}
 		if rec.Receiver != "" {
 			rec.Kind = "method"
@@ -306,10 +334,37 @@ func symbolRecordsFromDecl(fset *token.FileSet, src []byte, decl ast.Decl) []sym
 }
 
 func collectCallNames(body *ast.BlockStmt) []string {
+	depsWithContext := collectCallDeps(body, depContext{})
+	if depsWithContext == nil {
+		return nil
+	}
+
+	nameSet := map[string]struct{}{}
+	for _, dep := range depsWithContext {
+		if dep.Name != "" {
+			nameSet[dep.Name] = struct{}{}
+		}
+	}
+
+	deps := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		deps = append(deps, name)
+	}
+	sort.Strings(deps)
+	return deps
+}
+
+func collectCallDeps(body *ast.BlockStmt, ctx depContext) []depRef {
 	if body == nil {
 		return nil
 	}
-	set := map[string]struct{}{}
+	set := map[string]depRef{}
+	addDep := func(dep depRef) {
+		key := dep.Name + "\x00" + dep.PackagePath + "\x00" + dep.Kind
+		set[key] = dep
+	}
+
+	currentPackage := strings.TrimSpace(ctx.PackagePath)
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -318,21 +373,38 @@ func collectCallNames(body *ast.BlockStmt) []string {
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
 			if fn.Name != "" {
-				set[fn.Name] = struct{}{}
+				addDep(depRef{Name: fn.Name, PackagePath: currentPackage, Kind: "func"})
 			}
 		case *ast.SelectorExpr:
 			if fn.Sel != nil && fn.Sel.Name != "" {
-				set[fn.Sel.Name] = struct{}{}
+				if ident, ok := fn.X.(*ast.Ident); ok {
+					if pkgPath, found := ctx.LocalImports[ident.Name]; found {
+						if pkgPath != "" {
+							addDep(depRef{Name: fn.Sel.Name, PackagePath: pkgPath, Kind: "func"})
+						}
+						return true
+					}
+
+					addDep(depRef{Name: fn.Sel.Name, PackagePath: currentPackage, Kind: "method"})
+				}
 			}
 		}
 		return true
 	})
 
-	deps := make([]string, 0, len(set))
-	for name := range set {
-		deps = append(deps, name)
+	deps := make([]depRef, 0, len(set))
+	for _, dep := range set {
+		deps = append(deps, dep)
 	}
-	sort.Strings(deps)
+	sort.Slice(deps, func(i, j int) bool {
+		if deps[i].Name != deps[j].Name {
+			return deps[i].Name < deps[j].Name
+		}
+		if deps[i].PackagePath != deps[j].PackagePath {
+			return deps[i].PackagePath < deps[j].PackagePath
+		}
+		return deps[i].Kind < deps[j].Kind
+	})
 	return deps
 }
 

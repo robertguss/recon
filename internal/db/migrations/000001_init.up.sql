@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS symbol_deps (
     id       INTEGER PRIMARY KEY,
     symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
     dep_name TEXT NOT NULL,
-    UNIQUE(symbol_id, dep_name)
+    dep_package TEXT NOT NULL DEFAULT '',
+    dep_kind TEXT NOT NULL DEFAULT '',
+    UNIQUE(symbol_id, dep_name, dep_package, dep_kind)
 );
 
 CREATE TABLE IF NOT EXISTS decisions (

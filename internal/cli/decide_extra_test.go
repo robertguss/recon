@@ -96,6 +96,12 @@ func TestBuildCheckSpec(t *testing.T) {
 			checkPath: "go.mod",
 			wantErr:   `unsupported check type "nope"`,
 		},
+		{
+			name:      "unsupported check type with raw spec",
+			checkType: "nope",
+			checkSpec: `{}`,
+			wantErr:   `unsupported check type "nope"`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := buildCheckSpec(tc.checkType, tc.checkSpec, tc.checkPath, tc.checkSym, tc.checkPat, tc.checkScp)
@@ -153,8 +159,8 @@ func TestDecideCommandJSONInternalErrorPaths(t *testing.T) {
 		"missing db", "--reasoning", "r", "--evidence-summary", "e",
 		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
 	})
-	if err == nil || !strings.Contains(out, `"code": "internal_error"`) {
-		t.Fatalf("expected internal_error for missing db, out=%q err=%v", out, err)
+	if err == nil || !strings.Contains(out, `"code": "not_initialized"`) {
+		t.Fatalf("expected not_initialized for missing db, out=%q err=%v", out, err)
 	}
 
 	brokenRoot := setupModuleRoot(t)
