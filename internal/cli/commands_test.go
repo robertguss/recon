@@ -1129,3 +1129,22 @@ func TestMissingArgsStructuredErrors(t *testing.T) {
 		t.Fatalf("expected missing_argument envelope for decide, out=%q", out)
 	}
 }
+
+func TestDecideInvalidCheckTypeError(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"bad type", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "invalid_type", "--check-path", "go.mod", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid check type")
+	}
+	if !strings.Contains(out, "invalid_type") {
+		t.Fatalf("expected error mentioning invalid_type, out=%q", out)
+	}
+	if !strings.Contains(out, "must be one of") {
+		t.Fatalf("expected error listing valid check types, out=%q", out)
+	}
+}

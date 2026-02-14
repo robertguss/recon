@@ -266,10 +266,10 @@ func buildCheckSpec(checkType string, checkSpec string, checkPath string, checkS
 	if checkSpec != "" && typedProvided {
 		return "", fmt.Errorf("cannot combine --check-spec with typed check flags")
 	}
+	if checkType != "" && !supportedCheckType(checkType) {
+		return "", fmt.Errorf("unsupported check type %q; must be one of: file_exists, symbol_exists, grep_pattern", checkType)
+	}
 	if checkSpec != "" {
-		if !supportedCheckType(checkType) {
-			return "", fmt.Errorf("unsupported check type %q", checkType)
-		}
 		return checkSpec, nil
 	}
 	if !typedProvided {
@@ -309,7 +309,7 @@ func buildCheckSpec(checkType string, checkSpec string, checkPath string, checkS
 			Scope   string `json:"scope,omitempty"`
 		}{Pattern: checkPattern, Scope: checkScope})
 	default:
-		return "", fmt.Errorf("unsupported check type %q", checkType)
+		return "", fmt.Errorf("unsupported check type %q; must be one of: file_exists, symbol_exists, grep_pattern", checkType)
 	}
 }
 
