@@ -988,6 +988,70 @@ func TestDecideLifecycleFlags(t *testing.T) {
 	}
 }
 
+func TestDecideDryRun(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Dry run that would pass
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry test", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod",
+		"--dry-run", "--json",
+	})
+	if err != nil {
+		t.Fatalf("dry-run pass: %v", err)
+	}
+	if !strings.Contains(out, `"passed": true`) {
+		t.Fatalf("expected dry-run passed, out=%q", out)
+	}
+	// Should NOT contain proposal_id (no state created)
+	if strings.Contains(out, `"proposal_id"`) {
+		t.Fatalf("dry-run should not create proposal, out=%q", out)
+	}
+
+	// Dry run that would fail
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry fail", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "missing.txt",
+		"--dry-run", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected dry-run failure exit")
+	}
+	if !strings.Contains(out, `"passed": false`) {
+		t.Fatalf("expected dry-run failed, out=%q", out)
+	}
+
+	// Dry run text output (pass)
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry text", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod",
+		"--dry-run",
+	})
+	if err != nil {
+		t.Fatalf("dry-run text pass: %v", err)
+	}
+	if !strings.Contains(out, "Dry run: passed") {
+		t.Fatalf("expected dry-run text passed, out=%q", out)
+	}
+
+	// Dry run text output (fail)
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry text fail", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "missing.txt",
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected dry-run text failure exit")
+	}
+}
+
 func TestPatternCommand(t *testing.T) {
 	root := t.TempDir()
 	write := func(path, body string) {

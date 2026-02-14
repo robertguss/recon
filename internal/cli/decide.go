@@ -24,6 +24,7 @@ func newDecideCommand(app *App) *cobra.Command {
 		listFlag        bool
 		deleteID        int64
 		updateID        int64
+		dryRun          bool
 	)
 
 	cmd := &cobra.Command{
@@ -124,6 +125,51 @@ func newDecideCommand(app *App) *cobra.Command {
 				return nil
 			}
 
+			// Dry-run mode
+			if dryRun {
+				resolvedSpec, err := buildCheckSpec(checkType, checkSpec, checkPath, checkSymbol, checkPattern, checkScope)
+				if err != nil {
+					if jsonOut {
+						details := map[string]any{"check_type": checkType}
+						_ = writeJSONError("invalid_input", err.Error(), details)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				outcome := knowledge.NewService(conn).RunCheckPublic(cmd.Context(), checkType, resolvedSpec, app.ModuleRoot)
+
+				type dryRunResult struct {
+					Passed  bool   `json:"passed"`
+					Details string `json:"details"`
+				}
+				result := dryRunResult{Passed: outcome.Passed, Details: outcome.Details}
+
+				if jsonOut {
+					if !result.Passed {
+						_ = writeJSONError("verification_failed", result.Details, map[string]any{"passed": false})
+						return ExitError{Code: 2}
+					}
+					return writeJSON(result)
+				}
+
+				if result.Passed {
+					fmt.Printf("Dry run: passed — %s\n", result.Details)
+					return nil
+				}
+				fmt.Printf("Dry run: failed — %s\n", result.Details)
+				return ExitError{Code: 2}
+			}
+
 			// Propose mode (original flow)
 			title := args[0]
 
@@ -203,6 +249,7 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active decisions")
 	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a decision by ID")
 	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run verification check only, without creating any state")
 
 	return cmd
 }
