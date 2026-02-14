@@ -865,3 +865,52 @@ func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 		t.Fatalf("expected no prompt calls, got %d", promptCalls)
 	}
 }
+
+func TestPatternCommand(t *testing.T) {
+	root := t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write("go.mod", "module example.com/test\n")
+	write("main.go", "package main\nimport \"fmt\"\nfunc main() { fmt.Errorf(\"err: %w\", err) }\n")
+
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Promoted pattern (JSON)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Error wrapping",
+		"--description", "Use %w wrapping",
+		"--evidence-summary", "grep finds %w",
+		"--check-type", "grep_pattern",
+		"--check-pattern", "Errorf",
+		"--json",
+	})
+	if err != nil || !strings.Contains(out, `"promoted":`) {
+		t.Fatalf("pattern promoted json failed out=%q err=%v", out, err)
+	}
+
+	// Pattern text output
+	out, _, err = runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Another pattern",
+		"--description", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil || !strings.Contains(out, "Pattern promoted") {
+		t.Fatalf("pattern text failed out=%q err=%v", out, err)
+	}
+}
