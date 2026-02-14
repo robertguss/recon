@@ -1,3 +1,4 @@
 .recon/recon.db
 coverage.out
-recon
+recon.worktrees/
+.worktrees/
