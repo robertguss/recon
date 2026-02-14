@@ -771,6 +771,50 @@ func lineThree() {}
 	}
 }
 
+func TestFindListMode(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// List all symbols in root package
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--package", ".", "--json"})
+	if err != nil {
+		t.Fatalf("find list mode --json error: %v", err)
+	}
+	if !strings.Contains(out, `"symbols"`) || !strings.Contains(out, `"total"`) {
+		t.Fatalf("expected list mode JSON, out=%q", out)
+	}
+
+	// List mode text output
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"--package", "."})
+	if err != nil {
+		t.Fatalf("find list mode text error: %v", err)
+	}
+	if !strings.Contains(out, "Alpha") {
+		t.Fatalf("expected Alpha in text list, out=%q", out)
+	}
+
+	// No args, no filters → error
+	_, _, err = runCommandWithCapture(t, newFindCommand(app), []string{})
+	if err == nil {
+		t.Fatal("expected error for find with no args and no filters")
+	}
+
+	// List with --limit
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"--package", ".", "--limit", "1", "--json"})
+	if err != nil {
+		t.Fatalf("find list --limit error: %v", err)
+	}
+	if !strings.Contains(out, `"limit": 1`) {
+		t.Fatalf("expected limit 1, out=%q", out)
+	}
+}
+
 func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 	root := setupModuleRoot(t)
 
