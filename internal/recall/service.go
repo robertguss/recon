@@ -11,13 +11,15 @@ type RecallOptions struct {
 }
 
 type Item struct {
-	DecisionID       int64  `json:"decision_id"`
-	Title            string `json:"title"`
-	Reasoning        string `json:"reasoning"`
-	Confidence       string `json:"confidence"`
-	UpdatedAt        string `json:"updated_at"`
-	EvidenceSummary  string `json:"evidence_summary"`
-	EvidenceDrift    string `json:"evidence_drift_status"`
+	DecisionID      int64  `json:"decision_id,omitempty"`
+	PatternID       int64  `json:"pattern_id,omitempty"`
+	EntityType      string `json:"entity_type"`
+	Title           string `json:"title"`
+	Reasoning       string `json:"reasoning"`
+	Confidence      string `json:"confidence"`
+	UpdatedAt       string `json:"updated_at"`
+	EvidenceSummary string `json:"evidence_summary"`
+	EvidenceDrift   string `json:"evidence_drift_status"`
 }
 
 type Result struct {
@@ -51,13 +53,21 @@ func (s *Service) Recall(ctx context.Context, query string, opts RecallOptions) 
 
 func (s *Service) recallFTS(ctx context.Context, query string, limit int) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT d.id, d.title, d.reasoning, d.confidence, d.updated_at,
-       COALESCE(e.summary, ''), COALESCE(e.drift_status, 'ok')
+SELECT
+    search_index.entity_type,
+    search_index.entity_id,
+    search_index.title,
+    COALESCE(search_index.content, ''),
+    COALESCE(d.confidence, p.confidence, 'medium'),
+    COALESCE(d.updated_at, p.updated_at, ''),
+    COALESCE(e.summary, ''),
+    COALESCE(e.drift_status, 'ok')
 FROM search_index
-JOIN decisions d ON d.id = search_index.entity_id AND search_index.entity_type = 'decision'
-LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+LEFT JOIN decisions d ON d.id = search_index.entity_id AND search_index.entity_type = 'decision'
+LEFT JOIN patterns p ON p.id = search_index.entity_id AND search_index.entity_type = 'pattern'
+LEFT JOIN evidence e ON e.entity_type = search_index.entity_type AND e.entity_id = search_index.entity_id
 WHERE search_index MATCH ?
-ORDER BY d.updated_at DESC
+ORDER BY rank
 LIMIT ?;
 `, query, limit)
 	if err != nil {
@@ -71,14 +81,20 @@ LIMIT ?;
 func (s *Service) recallLike(ctx context.Context, query string, limit int) ([]Item, error) {
 	like := "%" + query + "%"
 	rows, err := s.db.QueryContext(ctx, `
-SELECT d.id, d.title, d.reasoning, d.confidence, d.updated_at,
+SELECT 'decision' AS entity_type, d.id, d.title, d.reasoning, d.confidence, d.updated_at,
        COALESCE(e.summary, ''), COALESCE(e.drift_status, 'ok')
 FROM decisions d
 LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
 WHERE d.status = 'active' AND (d.title LIKE ? OR d.reasoning LIKE ? OR e.summary LIKE ?)
-ORDER BY d.updated_at DESC
+UNION ALL
+SELECT 'pattern' AS entity_type, p.id, p.title, p.description, p.confidence, p.updated_at,
+       COALESCE(e2.summary, ''), COALESCE(e2.drift_status, 'ok')
+FROM patterns p
+LEFT JOIN evidence e2 ON e2.entity_type = 'pattern' AND e2.entity_id = p.id
+WHERE p.status = 'active' AND (p.title LIKE ? OR p.description LIKE ? OR e2.summary LIKE ?)
+ORDER BY updated_at DESC
 LIMIT ?;
-`, like, like, like, limit)
+`, like, like, like, like, like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("fallback recall query: %w", err)
 	}
@@ -91,8 +107,10 @@ func scanItems(rows *sql.Rows) ([]Item, error) {
 	items := make([]Item, 0, 8)
 	for rows.Next() {
 		var item Item
+		var entityID int64
 		if err := rows.Scan(
-			&item.DecisionID,
+			&item.EntityType,
+			&entityID,
 			&item.Title,
 			&item.Reasoning,
 			&item.Confidence,
@@ -101,6 +119,12 @@ func scanItems(rows *sql.Rows) ([]Item, error) {
 			&item.EvidenceDrift,
 		); err != nil {
 			return nil, fmt.Errorf("scan recall row: %w", err)
+		}
+		switch item.EntityType {
+		case "pattern":
+			item.PatternID = entityID
+		default:
+			item.DecisionID = entityID
 		}
 		items = append(items, item)
 	}

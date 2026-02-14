@@ -399,7 +399,7 @@ func TestCommandErrorBranches(t *testing.T) {
 		t.Fatalf("decide root4: %v", err)
 	}
 	out, _, err = runCommandWithCapture(t, newRecallCommand(app4), []string{"Use"})
-	if err != nil || !strings.Contains(out, "- #") {
+	if err != nil || !strings.Contains(out, "[decision] #") {
 		t.Fatalf("expected recall item text output, out=%q err=%v", out, err)
 	}
 

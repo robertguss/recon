@@ -16,12 +16,12 @@ func TestScanItemsRowsErrBranch(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT d.id").WithArgs("X", 10).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "title", "reasoning", "confidence", "updated_at", "summary", "drift_status"}).
-			AddRow(1, "t", "r", "high", "u", "s", "ok").
+	mock.ExpectQuery("search_index.entity_type").WithArgs("X", 10).WillReturnRows(
+		sqlmock.NewRows([]string{"entity_type", "entity_id", "title", "content", "confidence", "updated_at", "summary", "drift_status"}).
+			AddRow("decision", 1, "t", "r", "high", "u", "s", "ok").
 			RowError(0, errors.New("iter fail")),
 	)
-	mock.ExpectQuery("SELECT d.id").WithArgs("%X%", "%X%", "%X%", 10).WillReturnError(errors.New("fallback fail"))
+	mock.ExpectQuery("SELECT 'decision'").WithArgs("%X%", "%X%", "%X%", "%X%", "%X%", "%X%", 10).WillReturnError(errors.New("fallback fail"))
 	_, err = NewService(db).Recall(context.Background(), "X", RecallOptions{Limit: 10})
 	if err == nil || !strings.Contains(err.Error(), "fallback recall query") {
 		t.Fatalf("expected fallback recall query error due rows.Err path, got %v", err)

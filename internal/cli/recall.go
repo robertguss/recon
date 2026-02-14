@@ -54,7 +54,13 @@ func newRecallCommand(app *App) *cobra.Command {
 				return nil
 			}
 			for _, item := range result.Items {
-				fmt.Printf("- #%d %s [%s] drift=%s\n", item.DecisionID, item.Title, item.Confidence, item.EvidenceDrift)
+				id := item.DecisionID
+				label := "decision"
+				if item.EntityType == "pattern" {
+					id = item.PatternID
+					label = "pattern"
+				}
+				fmt.Printf("- [%s] #%d %s [%s] drift=%s\n", label, id, item.Title, item.Confidence, item.EvidenceDrift)
 				fmt.Printf("  %s\n", item.EvidenceSummary)
 			}
 			return nil
