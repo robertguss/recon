@@ -1100,3 +1100,32 @@ func TestPatternCommand(t *testing.T) {
 		t.Fatalf("pattern text failed out=%q err=%v", out, err)
 	}
 }
+
+func TestMissingArgsStructuredErrors(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// recall with no args, --json
+	out, _, err := runCommandWithCapture(t, newRecallCommand(app), []string{"--json"})
+	if err == nil {
+		t.Fatal("expected recall missing arg error")
+	}
+	if !strings.Contains(out, `"code": "missing_argument"`) {
+		t.Fatalf("expected missing_argument envelope for recall, out=%q", out)
+	}
+
+	// decide with no args, --json (no title, no lifecycle flags)
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected decide missing arg error")
+	}
+	if !strings.Contains(out, `"code": "missing_argument"`) {
+		t.Fatalf("expected missing_argument envelope for decide, out=%q", out)
+	}
+}

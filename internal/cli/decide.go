@@ -30,15 +30,7 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "decide [<title>]",
 		Short: "Propose a decision, verify evidence, and auto-promote when checks pass",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if listFlag || deleteID > 0 || updateID > 0 {
-				return nil
-			}
-			if len(args) != 1 {
-				return fmt.Errorf("requires exactly 1 arg(s), only received %d", len(args))
-			}
-			return nil
-		},
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// List mode
 			if listFlag {
@@ -171,6 +163,14 @@ func newDecideCommand(app *App) *cobra.Command {
 			}
 
 			// Propose mode (original flow)
+			if len(args) == 0 {
+				msg := "decide requires a <title> argument"
+				if jsonOut {
+					_ = writeJSONError("missing_argument", msg, map[string]any{"command": "decide"})
+					return ExitError{Code: 2}
+				}
+				return ExitError{Code: 2, Message: msg}
+			}
 			title := args[0]
 
 			resolvedSpec, err := buildCheckSpec(checkType, checkSpec, checkPath, checkSymbol, checkPattern, checkScope)

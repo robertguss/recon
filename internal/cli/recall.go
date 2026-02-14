@@ -16,8 +16,16 @@ func newRecallCommand(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "recall <query>",
 		Short: "Search promoted knowledge",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				msg := "recall requires a <query> argument"
+				if jsonOut {
+					_ = writeJSONError("missing_argument", msg, map[string]any{"command": "recall"})
+					return ExitError{Code: 2}
+				}
+				return ExitError{Code: 2, Message: msg}
+			}
 			query := args[0]
 
 			conn, err := openExistingDB(app)
