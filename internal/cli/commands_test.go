@@ -399,7 +399,7 @@ func TestCommandErrorBranches(t *testing.T) {
 		t.Fatalf("decide root4: %v", err)
 	}
 	out, _, err = runCommandWithCapture(t, newRecallCommand(app4), []string{"Use"})
-	if err != nil || !strings.Contains(out, "- #") {
+	if err != nil || !strings.Contains(out, "[decision] #") {
 		t.Fatalf("expected recall item text output, out=%q err=%v", out, err)
 	}
 
@@ -771,6 +771,50 @@ func lineThree() {}
 	}
 }
 
+func TestFindListMode(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// List all symbols in root package
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--package", ".", "--json"})
+	if err != nil {
+		t.Fatalf("find list mode --json error: %v", err)
+	}
+	if !strings.Contains(out, `"symbols"`) || !strings.Contains(out, `"total"`) {
+		t.Fatalf("expected list mode JSON, out=%q", out)
+	}
+
+	// List mode text output
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"--package", "."})
+	if err != nil {
+		t.Fatalf("find list mode text error: %v", err)
+	}
+	if !strings.Contains(out, "Alpha") {
+		t.Fatalf("expected Alpha in text list, out=%q", out)
+	}
+
+	// No args, no filters → error
+	_, _, err = runCommandWithCapture(t, newFindCommand(app), []string{})
+	if err == nil {
+		t.Fatal("expected error for find with no args and no filters")
+	}
+
+	// List with --limit
+	out, _, err = runCommandWithCapture(t, newFindCommand(app), []string{"--package", ".", "--limit", "1", "--json"})
+	if err != nil {
+		t.Fatalf("find list --limit error: %v", err)
+	}
+	if !strings.Contains(out, `"limit": 1`) {
+		t.Fatalf("expected limit 1, out=%q", out)
+	}
+}
+
 func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 	root := setupModuleRoot(t)
 
@@ -819,5 +863,288 @@ func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 	}
 	if promptCalls != 0 {
 		t.Fatalf("expected no prompt calls, got %d", promptCalls)
+	}
+}
+
+func TestStatusCommand(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	// Before init
+	_, _, err := runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err == nil {
+		t.Fatal("expected error before init")
+	}
+
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// After init, before sync
+	out, _, err := runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if !strings.Contains(out, `"initialized": true`) {
+		t.Fatalf("expected initialized true, out=%q", out)
+	}
+
+	// After sync
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	out, _, err = runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("status --json after sync: %v", err)
+	}
+	if !strings.Contains(out, `"files"`) || !strings.Contains(out, `"symbols"`) {
+		t.Fatalf("expected counts, out=%q", out)
+	}
+
+	// Text output
+	out, _, err = runCommandWithCapture(t, newStatusCommand(app), nil)
+	if err != nil {
+		t.Fatalf("status text: %v", err)
+	}
+	if !strings.Contains(out, "Initialized: yes") {
+		t.Fatalf("expected text status, out=%q", out)
+	}
+}
+
+func TestDecideLifecycleFlags(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Create a decision
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"Lifecycle Test", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
+	})
+	if err != nil {
+		t.Fatalf("decide create: %v", err)
+	}
+	if !strings.Contains(out, `"promoted": true`) {
+		t.Fatalf("expected promoted, out=%q", out)
+	}
+
+	// --list JSON
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list", "--json"})
+	if err != nil {
+		t.Fatalf("decide --list --json: %v", err)
+	}
+	if !strings.Contains(out, "Lifecycle Test") {
+		t.Fatalf("expected decision in list, out=%q", out)
+	}
+
+	// --list text
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("decide --list text: %v", err)
+	}
+	if !strings.Contains(out, "Lifecycle Test") {
+		t.Fatalf("expected decision in text list, out=%q", out)
+	}
+
+	// --update with --confidence
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--update", "1", "--confidence", "high", "--json"})
+	if err != nil {
+		t.Fatalf("decide --update: %v", err)
+	}
+
+	// --update text
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--update", "1", "--confidence", "low"})
+	if err != nil {
+		t.Fatalf("decide --update text: %v", err)
+	}
+
+	// --delete JSON
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--delete", "1", "--json"})
+	if err != nil {
+		t.Fatalf("decide --delete --json: %v", err)
+	}
+	if !strings.Contains(out, `"archived": true`) {
+		t.Fatalf("expected archived, out=%q", out)
+	}
+
+	// --delete text (non-existent after archive)
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--delete", "1"})
+	if err == nil {
+		t.Fatal("expected error deleting already-archived decision")
+	}
+
+	// --list empty
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("decide --list empty: %v", err)
+	}
+	if !strings.Contains(out, "No active decisions") {
+		t.Fatalf("expected empty list, out=%q", out)
+	}
+}
+
+func TestDecideDryRun(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Dry run that would pass
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry test", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod",
+		"--dry-run", "--json",
+	})
+	if err != nil {
+		t.Fatalf("dry-run pass: %v", err)
+	}
+	if !strings.Contains(out, `"passed": true`) {
+		t.Fatalf("expected dry-run passed, out=%q", out)
+	}
+	// Should NOT contain proposal_id (no state created)
+	if strings.Contains(out, `"proposal_id"`) {
+		t.Fatalf("dry-run should not create proposal, out=%q", out)
+	}
+
+	// Dry run that would fail
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry fail", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "missing.txt",
+		"--dry-run", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected dry-run failure exit")
+	}
+	if !strings.Contains(out, `"passed": false`) {
+		t.Fatalf("expected dry-run failed, out=%q", out)
+	}
+
+	// Dry run text output (pass)
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry text", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod",
+		"--dry-run",
+	})
+	if err != nil {
+		t.Fatalf("dry-run text pass: %v", err)
+	}
+	if !strings.Contains(out, "Dry run: passed") {
+		t.Fatalf("expected dry-run text passed, out=%q", out)
+	}
+
+	// Dry run text output (fail)
+	_, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"dry text fail", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "missing.txt",
+		"--dry-run",
+	})
+	if err == nil {
+		t.Fatal("expected dry-run text failure exit")
+	}
+}
+
+func TestPatternCommand(t *testing.T) {
+	root := t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write("go.mod", "module example.com/test\n")
+	write("main.go", "package main\nimport \"fmt\"\nfunc main() { fmt.Errorf(\"err: %w\", err) }\n")
+
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Promoted pattern (JSON)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Error wrapping",
+		"--description", "Use %w wrapping",
+		"--evidence-summary", "grep finds %w",
+		"--check-type", "grep_pattern",
+		"--check-pattern", "Errorf",
+		"--json",
+	})
+	if err != nil || !strings.Contains(out, `"promoted":`) {
+		t.Fatalf("pattern promoted json failed out=%q err=%v", out, err)
+	}
+
+	// Pattern text output
+	out, _, err = runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Another pattern",
+		"--description", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil || !strings.Contains(out, "Pattern promoted") {
+		t.Fatalf("pattern text failed out=%q err=%v", out, err)
+	}
+}
+
+func TestMissingArgsStructuredErrors(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// recall with no args, --json
+	out, _, err := runCommandWithCapture(t, newRecallCommand(app), []string{"--json"})
+	if err == nil {
+		t.Fatal("expected recall missing arg error")
+	}
+	if !strings.Contains(out, `"code": "missing_argument"`) {
+		t.Fatalf("expected missing_argument envelope for recall, out=%q", out)
+	}
+
+	// decide with no args, --json (no title, no lifecycle flags)
+	out, _, err = runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "file_exists", "--check-path", "go.mod", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected decide missing arg error")
+	}
+	if !strings.Contains(out, `"code": "missing_argument"`) {
+		t.Fatalf("expected missing_argument envelope for decide, out=%q", out)
+	}
+}
+
+func TestDecideInvalidCheckTypeError(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"bad type", "--reasoning", "r", "--evidence-summary", "e",
+		"--check-type", "invalid_type", "--check-path", "go.mod", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid check type")
+	}
+	if !strings.Contains(out, "invalid_type") {
+		t.Fatalf("expected error mentioning invalid_type, out=%q", out)
+	}
+	if !strings.Contains(out, "must be one of") {
+		t.Fatalf("expected error listing valid check types, out=%q", out)
 	}
 }

@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,233 @@ func TestRunCheckAndCheckImplementations(t *testing.T) {
 	}
 	if _, err := svc.runGrepPattern(`{"pattern":"x"}`, filepath.Join(root, "missing")); err == nil {
 		t.Fatal("expected collect files error for bad module root")
+	}
+}
+
+func TestListDecisions(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	// Create a promoted decision first
+	_, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "Use Cobra",
+		Reasoning:       "Better commands",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	items, err := svc.ListDecisions(context.Background())
+	if err != nil {
+		t.Fatalf("ListDecisions: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected decisions")
+	}
+}
+
+func TestArchiveDecision(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "To Archive",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.ArchiveDecision(context.Background(), res.DecisionID)
+	if err != nil {
+		t.Fatalf("ArchiveDecision: %v", err)
+	}
+
+	items, err := svc.ListDecisions(context.Background())
+	if err != nil {
+		t.Fatalf("ListDecisions after archive: %v", err)
+	}
+	for _, item := range items {
+		if item.ID == res.DecisionID {
+			t.Fatal("archived decision should not appear in list")
+		}
+	}
+
+	// Archive non-existent
+	if err := svc.ArchiveDecision(context.Background(), 99999); err == nil {
+		t.Fatal("expected error archiving non-existent decision")
+	}
+}
+
+func TestUpdateConfidence(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "To Update",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.UpdateConfidence(context.Background(), res.DecisionID, "high")
+	if err != nil {
+		t.Fatalf("UpdateConfidence: %v", err)
+	}
+
+	// Invalid confidence
+	if err := svc.UpdateConfidence(context.Background(), res.DecisionID, "invalid"); err == nil {
+		t.Fatal("expected error for invalid confidence")
+	}
+
+	// Non-existent
+	if err := svc.UpdateConfidence(context.Background(), 99999, "low"); err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-existent decision, got %v", err)
+	}
+}
+
+func TestConfidenceDecaysOnDrift(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	// Create a high-confidence decision
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "High Confidence",
+		Reasoning:       "reason",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+		Confidence:      "high",
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	// Manually set evidence to drifting
+	_, err = conn.Exec(`UPDATE evidence SET drift_status = 'drifting' WHERE entity_type = 'decision' AND entity_id = ?`, res.DecisionID)
+	if err != nil {
+		t.Fatalf("set drifting: %v", err)
+	}
+
+	// Run decay
+	decayed, err := svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift: %v", err)
+	}
+	if decayed != 1 {
+		t.Fatalf("expected 1 decayed, got %d", decayed)
+	}
+
+	// Verify confidence went from high -> medium
+	var confidence string
+	if err := conn.QueryRow(`SELECT confidence FROM decisions WHERE id = ?`, res.DecisionID).Scan(&confidence); err != nil {
+		t.Fatalf("query confidence: %v", err)
+	}
+	if confidence != "medium" {
+		t.Fatalf("expected medium after drift decay, got %q", confidence)
+	}
+
+	// Run again — should decay medium -> low
+	decayed, err = svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift second: %v", err)
+	}
+	if decayed != 1 {
+		t.Fatalf("expected 1 decayed second pass, got %d", decayed)
+	}
+	if err := conn.QueryRow(`SELECT confidence FROM decisions WHERE id = ?`, res.DecisionID).Scan(&confidence); err != nil {
+		t.Fatalf("query confidence: %v", err)
+	}
+	if confidence != "low" {
+		t.Fatalf("expected low after second decay, got %q", confidence)
+	}
+
+	// Run again — low can't decay further, should not be counted
+	decayed, err = svc.DecayConfidenceOnDrift(context.Background())
+	if err != nil {
+		t.Fatalf("DecayConfidenceOnDrift third: %v", err)
+	}
+	if decayed != 0 {
+		t.Fatalf("expected 0 decayed when already low, got %d", decayed)
+	}
+}
+
+func TestRunCheckPublicSuccess(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	outcome := svc.RunCheckPublic(context.Background(), "file_exists", `{"path":"go.mod"}`, root)
+	if !outcome.Passed {
+		t.Fatalf("expected passed, got %+v", outcome)
+	}
+}
+
+func TestRunCheckPublicError(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	outcome := svc.RunCheckPublic(context.Background(), "unknown_type", `{}`, root)
+	if outcome.Passed {
+		t.Fatal("expected not passed for unknown check type")
+	}
+	if !strings.Contains(outcome.Details, "unsupported") {
+		t.Fatalf("expected unsupported error in details, got %q", outcome.Details)
+	}
+}
+
+func TestListDecisionsDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if _, err := svc.ListDecisions(context.Background()); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestArchiveDecisionDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if err := svc.ArchiveDecision(context.Background(), 1); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestUpdateConfidenceDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if err := svc.UpdateConfidence(context.Background(), 1, "high"); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestDecayConfidenceOnDriftDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if _, err := svc.DecayConfidenceOnDrift(context.Background()); err == nil {
+		t.Fatal("expected error on closed DB")
 	}
 }
 

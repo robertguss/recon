@@ -16,6 +16,9 @@ import (
 
 var marshalJSON = json.Marshal
 
+// ErrNotFound is returned when a decision or entity does not exist or is already archived.
+var ErrNotFound = fmt.Errorf("not found")
+
 type ProposeDecisionInput struct {
 	Title           string
 	Reasoning       string
@@ -206,6 +209,110 @@ WHERE id = ?;
 		VerificationPassed:  false,
 		VerificationDetails: outcome.Details,
 	}, nil
+}
+
+type DecisionListItem struct {
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+	Status     string `json:"status"`
+	Drift      string `json:"drift_status"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func (s *Service) ListDecisions(ctx context.Context) ([]DecisionListItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT d.id, d.title, d.confidence, d.status, COALESCE(e.drift_status, 'ok'), d.updated_at
+FROM decisions d
+LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+WHERE d.status = 'active'
+ORDER BY d.updated_at DESC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions: %w", err)
+	}
+	defer rows.Close()
+	items := []DecisionListItem{}
+	for rows.Next() {
+		var item DecisionListItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Confidence, &item.Status, &item.Drift, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan decision: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) ArchiveDecision(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE decisions SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active';`, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("archive decision: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+func (s *Service) UpdateConfidence(ctx context.Context, id int64, confidence string) error {
+	confidence = strings.TrimSpace(strings.ToLower(confidence))
+	switch confidence {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("confidence must be low, medium, or high")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE decisions SET confidence = ?, updated_at = ? WHERE id = ? AND status = 'active';`, confidence, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("update confidence: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// DecayConfidenceOnDrift downgrades confidence for decisions with drifting/broken evidence.
+// high -> medium, medium -> low, low stays low. Returns the number of decisions decayed.
+func (s *Service) DecayConfidenceOnDrift(ctx context.Context) (int, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE decisions SET
+    confidence = CASE confidence WHEN 'high' THEN 'medium' WHEN 'medium' THEN 'low' END,
+    updated_at = ?
+WHERE status = 'active'
+  AND confidence IN ('high', 'medium')
+  AND id IN (
+      SELECT entity_id FROM evidence
+      WHERE entity_type = 'decision' AND drift_status IN ('drifting', 'broken')
+  );
+`, now)
+	if err != nil {
+		return 0, fmt.Errorf("decay confidence: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// CheckOutcome is the public version of runCheckOutcome for use by other packages.
+type CheckOutcome struct {
+	Passed   bool
+	Details  string
+	Baseline map[string]any
+}
+
+// RunCheckPublic exposes the check runner for use by external packages (e.g., pattern service).
+func (s *Service) RunCheckPublic(ctx context.Context, checkType, checkSpec, moduleRoot string) CheckOutcome {
+	outcome, err := s.runCheck(ctx, ProposeDecisionInput{
+		CheckType:  checkType,
+		CheckSpec:  checkSpec,
+		ModuleRoot: moduleRoot,
+	})
+	if err != nil {
+		return CheckOutcome{Passed: false, Details: err.Error(), Baseline: map[string]any{"error": err.Error()}}
+	}
+	return CheckOutcome{Passed: outcome.Passed, Details: outcome.Details, Baseline: outcome.Baseline}
 }
 
 type runCheckOutcome struct {

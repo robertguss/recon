@@ -17,13 +17,44 @@ func newFindCommand(app *App) *cobra.Command {
 		packageFilter string
 		fileFilter    string
 		kindFilter    string
+		limit         int
 	)
 
 	cmd := &cobra.Command{
-		Use:   "find <symbol>",
-		Short: "Find exact symbol and direct in-project dependencies",
-		Args:  cobra.ExactArgs(1),
+		Use:   "find [<symbol>]",
+		Short: "Find exact symbol or list symbols by filter",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			normalizedKind, err := normalizeFindKind(kindFilter)
+			if err != nil {
+				if jsonOut {
+					details := map[string]any{"kind": strings.TrimSpace(kindFilter)}
+					_ = writeJSONError("invalid_input", err.Error(), details)
+					return ExitError{Code: 2}
+				}
+				return ExitError{Code: 2, Message: err.Error()}
+			}
+
+			queryOptions := find.QueryOptions{
+				PackagePath: strings.TrimSpace(packageFilter),
+				FilePath:    normalizeFindPath(fileFilter),
+				Kind:        normalizedKind,
+			}
+
+			// No symbol arg: check for list mode vs missing arg error
+			if len(args) == 0 {
+				hasFilters := queryOptions.PackagePath != "" || queryOptions.FilePath != "" || queryOptions.Kind != ""
+				if !hasFilters {
+					msg := "find requires a <symbol> argument or filter flags (--package, --file, --kind)"
+					if jsonOut {
+						_ = writeJSONError("missing_argument", msg, map[string]any{"command": "find"})
+						return ExitError{Code: 2}
+					}
+					return ExitError{Code: 2, Message: msg}
+				}
+				return runFindListMode(cmd, app, queryOptions, limit, jsonOut)
+			}
+
 			symbol := args[0]
 			if maxBodyLines < 0 {
 				msg := "--max-body-lines must be >= 0"
@@ -35,32 +66,17 @@ func newFindCommand(app *App) *cobra.Command {
 				return ExitError{Code: 2, Message: msg}
 			}
 
-			normalizedKind, err := normalizeFindKind(kindFilter)
-			if err != nil {
+			conn, connErr := openExistingDB(app)
+			if connErr != nil {
 				if jsonOut {
-					details := map[string]any{"kind": strings.TrimSpace(kindFilter)}
-					_ = writeJSONError("invalid_input", err.Error(), details)
-					return ExitError{Code: 2}
+					return exitJSONCommandError(connErr)
 				}
-				return ExitError{Code: 2, Message: err.Error()}
-			}
-
-			conn, err := openExistingDB(app)
-			if err != nil {
-				if jsonOut {
-					return exitJSONCommandError(err)
-				}
-				return err
+				return connErr
 			}
 			defer conn.Close()
 
-			queryOptions := find.QueryOptions{
-				PackagePath: strings.TrimSpace(packageFilter),
-				FilePath:    normalizeFindPath(fileFilter),
-				Kind:        normalizedKind,
-			}
-
-			result, err := find.NewService(conn).Find(cmd.Context(), symbol, queryOptions)
+			result, findErr := find.NewService(conn).Find(cmd.Context(), symbol, queryOptions)
+			err = findErr
 			if err != nil {
 				switch e := err.(type) {
 				case find.NotFoundError:
@@ -146,7 +162,42 @@ func newFindCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&packageFilter, "package", "", "Filter by package path when symbols are ambiguous")
 	cmd.Flags().StringVar(&fileFilter, "file", "", "Filter by file path when symbols are ambiguous")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter by symbol kind (func, method, type, var, const)")
+	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum symbols in list mode")
 	return cmd
+}
+
+func runFindListMode(cmd *cobra.Command, app *App, opts find.QueryOptions, limit int, jsonOut bool) error {
+	conn, err := openExistingDB(app)
+	if err != nil {
+		if jsonOut {
+			return exitJSONCommandError(err)
+		}
+		return err
+	}
+	defer conn.Close()
+
+	result, err := find.NewService(conn).List(cmd.Context(), opts, limit)
+	if err != nil {
+		if jsonOut {
+			_ = writeJSONError("internal_error", err.Error(), nil)
+			return ExitError{Code: 2}
+		}
+		return err
+	}
+
+	if jsonOut {
+		return writeJSON(result)
+	}
+
+	fmt.Printf("Symbols (%d of %d):\n", len(result.Symbols), result.Total)
+	for _, s := range result.Symbols {
+		label := s.Name
+		if s.Receiver != "" {
+			label = s.Receiver + "." + s.Name
+		}
+		fmt.Printf("- %s %s (%s:%d-%d) pkg=%s\n", s.Kind, label, s.FilePath, s.LineStart, s.LineEnd, s.Package)
+	}
+	return nil
 }
 
 func normalizeFindPath(path string) string {

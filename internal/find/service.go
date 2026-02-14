@@ -73,6 +73,86 @@ func NewService(conn *sql.DB) *Service {
 	return &Service{db: conn}
 }
 
+type ListResult struct {
+	Symbols []Symbol `json:"symbols"`
+	Total   int      `json:"total"`
+	Limit   int      `json:"limit"`
+}
+
+func (s *Service) List(ctx context.Context, opts QueryOptions, limit int) (ListResult, error) {
+	opts = normalizeQueryOptions(opts)
+	if !hasActiveFilters(opts) {
+		return ListResult{}, fmt.Errorf("list mode requires at least one filter (--package, --file, or --kind)")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	where, args := buildListWhere(opts)
+
+	// Get total count
+	var total int
+	countQuery := "SELECT COUNT(*) FROM symbols s JOIN files f ON f.id = s.file_id LEFT JOIN packages p ON p.id = f.package_id WHERE " + where
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return ListResult{}, fmt.Errorf("count list symbols: %w", err)
+	}
+
+	// Get limited results (no body)
+	selectQuery := `
+SELECT s.id, s.kind, s.name, COALESCE(s.signature, ''), '',
+       s.line_start, s.line_end, COALESCE(s.receiver, ''), f.path, COALESCE(p.path, '.')
+FROM symbols s
+JOIN files f ON f.id = s.file_id
+LEFT JOIN packages p ON p.id = f.package_id
+WHERE ` + where + `
+ORDER BY p.path, f.path, s.kind, s.name
+LIMIT ?;`
+	rows, err := s.db.QueryContext(ctx, selectQuery, append(args, limit)...)
+	if err != nil {
+		return ListResult{}, fmt.Errorf("query list symbols: %w", err)
+	}
+	defer rows.Close()
+
+	symbols := make([]Symbol, 0, limit)
+	for rows.Next() {
+		var sym Symbol
+		if err := rows.Scan(&sym.ID, &sym.Kind, &sym.Name, &sym.Signature, &sym.Body,
+			&sym.LineStart, &sym.LineEnd, &sym.Receiver, &sym.FilePath, &sym.Package); err != nil {
+			return ListResult{}, fmt.Errorf("scan list symbol: %w", err)
+		}
+		symbols = append(symbols, sym)
+	}
+	if err := rows.Err(); err != nil {
+		return ListResult{}, fmt.Errorf("iterate list symbols: %w", err)
+	}
+
+	return ListResult{Symbols: symbols, Total: total, Limit: limit}, nil
+}
+
+func buildListWhere(opts QueryOptions) (string, []any) {
+	clauses := []string{"1=1"}
+	args := []any{}
+	if opts.PackagePath != "" {
+		clauses = append(clauses, "COALESCE(p.path, '.') = ?")
+		args = append(args, opts.PackagePath)
+	}
+	if opts.FilePath != "" {
+		if !strings.Contains(opts.FilePath, "/") {
+			// Filename-only: match basename using LIKE suffix
+			clauses = append(clauses, "(f.path = ? OR f.path LIKE ?)")
+			args = append(args, opts.FilePath, "%/"+opts.FilePath)
+		} else {
+			clauses = append(clauses, "(f.path = ? OR f.path LIKE ?)")
+			args = append(args, opts.FilePath, "%"+opts.FilePath+"%")
+		}
+	}
+	if opts.Kind != "" {
+		clauses = append(clauses, "LOWER(s.kind) = ?")
+		args = append(args, opts.Kind)
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
 func (s *Service) FindExact(ctx context.Context, symbol string) (Result, error) {
 	return s.Find(ctx, symbol, QueryOptions{})
 }
@@ -80,6 +160,13 @@ func (s *Service) FindExact(ctx context.Context, symbol string) (Result, error) 
 func (s *Service) Find(ctx context.Context, symbol string, opts QueryOptions) (Result, error) {
 	opts = normalizeQueryOptions(opts)
 	filtersApplied := hasActiveFilters(opts)
+
+	// Support "Receiver.Name" dot syntax
+	var receiverFilter string
+	if idx := strings.IndexByte(symbol, '.'); idx > 0 && idx < len(symbol)-1 {
+		receiverFilter = symbol[:idx]
+		symbol = symbol[idx+1:]
+	}
 
 	rows, err := s.db.QueryContext(ctx, `
 SELECT s.id, s.kind, s.name, COALESCE(s.signature, ''), COALESCE(s.body, ''),
@@ -118,12 +205,27 @@ ORDER BY p.path, f.path, s.kind, s.receiver;
 		return Result{}, fmt.Errorf("iterate symbol rows: %w", err)
 	}
 
+	// Apply receiver filter from dot syntax
+	if receiverFilter != "" {
+		filtered := make([]Symbol, 0, len(matches))
+		for _, m := range matches {
+			if m.Receiver == receiverFilter {
+				filtered = append(filtered, m)
+			}
+		}
+		matches = filtered
+	}
+
 	if len(matches) == 0 {
+		queryLabel := symbol
+		if receiverFilter != "" {
+			queryLabel = receiverFilter + "." + symbol
+		}
 		suggestions, err := s.suggestions(ctx, symbol)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{}, NotFoundError{Symbol: symbol, Suggestions: suggestions}
+		return Result{}, NotFoundError{Symbol: queryLabel, Suggestions: suggestions}
 	}
 
 	if filtersApplied {
@@ -182,7 +284,7 @@ func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 		if opts.PackagePath != "" && match.Package != opts.PackagePath {
 			continue
 		}
-		if opts.FilePath != "" && normalizeFilePath(match.FilePath) != opts.FilePath {
+		if opts.FilePath != "" && !matchFilePath(normalizeFilePath(match.FilePath), opts.FilePath) {
 			continue
 		}
 		if opts.Kind != "" && strings.ToLower(match.Kind) != opts.Kind {
@@ -191,6 +293,18 @@ func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 		filtered = append(filtered, match)
 	}
 	return filtered
+}
+
+func matchFilePath(symbolPath, filter string) bool {
+	if symbolPath == filter {
+		return true
+	}
+	// No slash = suffix/filename match
+	if !strings.Contains(filter, "/") {
+		return filepath.Base(symbolPath) == filter
+	}
+	// Has slash = substring match against relative path
+	return strings.Contains(symbolPath, filter) || strings.HasSuffix(symbolPath, filter)
 }
 
 func (s *Service) suggestions(ctx context.Context, symbol string) ([]string, error) {

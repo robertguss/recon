@@ -3,6 +3,7 @@ package orient
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -227,5 +228,278 @@ func TestBuildWithGitRepoHeadBranchExplicit(t *testing.T) {
 	}
 	if payload.Freshness.Reason != "git_head_changed_since_last_sync" {
 		t.Fatalf("expected head change stale reason, got %+v", payload.Freshness)
+	}
+}
+
+func TestBuildModuleHeat(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a.go"), []byte("package pkg\nfunc A(){}\n"), 0o644); err != nil {
+		t.Fatalf("write pkg/a.go: %v", err)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Tester")
+	run("add", ".")
+	run("commit", "-m", "init")
+
+	// Make multiple recent commits touching main.go to make root "hot"
+	for i := 0; i < 5; i++ {
+		content := fmt.Sprintf("package main\nfunc main(){}\n// change %d\n", i)
+		if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write main.go change %d: %v", i, err)
+		}
+		run("add", "main.go")
+		run("commit", "-m", fmt.Sprintf("change %d", i))
+	}
+
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	for _, m := range payload.Modules {
+		if m.Path == "." && m.Heat != "hot" {
+			t.Fatalf("expected root module to be hot, got %s", m.Heat)
+		}
+	}
+}
+
+func TestBuildArchitectureSection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "recon"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/recon: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "recon", "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.Architecture.EntryPoints) == 0 {
+		t.Fatal("expected entry points")
+	}
+	found := false
+	for _, ep := range payload.Architecture.EntryPoints {
+		if strings.Contains(ep, "cmd/recon/main.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected cmd/recon/main.go in entry points, got %v", payload.Architecture.EntryPoints)
+	}
+}
+
+func TestOrientShowsActivePatterns(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	// Seed an active pattern
+	_, _ = conn.Exec(`INSERT INTO patterns(id,title,description,confidence,status,created_at,updated_at) VALUES (1,'Error wrapping','Use fmt.Errorf with %%w','high','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');`)
+	_, _ = conn.Exec(`INSERT INTO evidence(entity_type,entity_id,summary,drift_status) VALUES ('pattern',1,'grep finds %%w usage','ok');`)
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.ActivePatterns) == 0 {
+		t.Fatal("expected active patterns in orient output")
+	}
+	if payload.ActivePatterns[0].Title != "Error wrapping" {
+		t.Fatalf("expected 'Error wrapping', got %q", payload.ActivePatterns[0].Title)
+	}
+
+	// Verify text rendering includes patterns
+	text := RenderText(payload)
+	if !strings.Contains(text, "Error wrapping") {
+		t.Fatalf("expected text to contain pattern title, got:\n%s", text)
+	}
+}
+
+func TestRenderTextAllSections(t *testing.T) {
+	payload := Payload{
+		Project:      ProjectInfo{Name: "proj", Language: "go", ModulePath: "example.com/proj"},
+		Architecture: Architecture{EntryPoints: []string{"cmd/main.go"}, DependencyFlow: "cmd → pkg"},
+		Freshness:    Freshness{IsStale: true, Reason: "stale", LastSyncAt: "2026-01-01T00:00:00Z"},
+		Summary:      Summary{FileCount: 1, SymbolCount: 2, PackageCount: 1, DecisionCount: 1},
+		Modules:      []ModuleSummary{},
+		ActiveDecisions: []DecisionDigest{
+			{ID: 1, Title: "d1", Confidence: "high", Drift: "ok", UpdatedAt: "2026-01-01T00:00:00Z"},
+		},
+		ActivePatterns: []PatternDigest{
+			{ID: 1, Title: "p1", Confidence: "medium", Drift: "ok"},
+		},
+		RecentActivity: []RecentFile{
+			{File: "main.go", LastModified: "2026-01-01T00:00:00Z"},
+		},
+		Warnings: []string{"something is wrong"},
+	}
+	text := RenderText(payload)
+	for _, want := range []string{
+		"Entry points: cmd/main.go",
+		"Dependency flow: cmd → pkg",
+		"STALE CONTEXT: stale",
+		"Last sync: 2026-01-01T00:00:00Z",
+		"- (none)", // Modules empty
+		"- #1 d1",
+		"Active patterns:",
+		"- #1 p1",
+		"Recent activity:",
+		"- main.go",
+		"Warnings:",
+		"- something is wrong",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in text, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestFormatDependencyFlowVariants(t *testing.T) {
+	// Empty
+	if got := formatDependencyFlow(nil); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+	// Single dep
+	got := formatDependencyFlow(map[string][]string{"cmd": {"pkg"}})
+	if !strings.Contains(got, "cmd → pkg") {
+		t.Fatalf("expected single dep flow, got %q", got)
+	}
+	// Multi dep
+	got = formatDependencyFlow(map[string][]string{"cmd": {"pkg1", "pkg2"}})
+	if !strings.Contains(got, "cmd → {pkg1, pkg2}") {
+		t.Fatalf("expected multi dep flow, got %q", got)
+	}
+}
+
+func TestBuildLoadPatternsError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	// Create tables needed for summary, modules, decisions, but make patterns table broken
+	_, _ = conn.Exec(`DROP TABLE IF EXISTS patterns;`)
+	if _, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root}); err == nil || !strings.Contains(err.Error(), "query patterns") {
+		t.Fatalf("expected patterns error, got %v", err)
+	}
+}
+
+func TestBuildRecentActivityCapsAtFive(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Tester")
+
+	// Create 7 unique files, each committed separately
+	for i := 0; i < 7; i++ {
+		name := fmt.Sprintf("file%d.go", i)
+		content := fmt.Sprintf("package main\nfunc F%d(){}\n", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		run("add", name)
+		run("commit", "-m", fmt.Sprintf("add %s", name))
+	}
+
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.RecentActivity) != 5 {
+		t.Fatalf("expected exactly 5 recent activity entries, got %d", len(payload.RecentActivity))
+	}
+}
+
+func TestBuildRecentActivity(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Tester")
+	run("add", ".")
+	run("commit", "-m", "init")
+
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.RecentActivity) == 0 {
+		t.Fatal("expected recent activity")
+	}
+	if payload.RecentActivity[0].File != "main.go" && payload.RecentActivity[0].File != "go.mod" {
+		t.Fatalf("unexpected recent activity file: %s", payload.RecentActivity[0].File)
 	}
 }

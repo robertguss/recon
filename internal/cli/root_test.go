@@ -28,8 +28,8 @@ func TestNewRootCommandAndErrors(t *testing.T) {
 	if cmd.Use != "recon" {
 		t.Fatalf("unexpected root use: %q", cmd.Use)
 	}
-	if len(cmd.Commands()) != 6 {
-		t.Fatalf("expected 6 subcommands, got %d", len(cmd.Commands()))
+	if len(cmd.Commands()) != 8 {
+		t.Fatalf("expected 8 subcommands, got %d", len(cmd.Commands()))
 	}
 
 	osGetwd = func() (string, error) { return "", errors.New("cwd fail") }

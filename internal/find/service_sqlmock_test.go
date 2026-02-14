@@ -71,6 +71,50 @@ func TestFindExactSuggestionsAndDepsErrors(t *testing.T) {
 	}
 }
 
+func TestListQueryAndScanErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	svc := NewService(db)
+
+	// query list symbols error (count succeeds, query fails)
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT s.id").WillReturnError(errors.New("list query fail"))
+	_, err = svc.List(context.Background(), QueryOptions{PackagePath: "."}, 10)
+	if err == nil || !strings.Contains(err.Error(), "query list symbols") {
+		t.Fatalf("expected query list symbols error, got %v", err)
+	}
+
+	// scan list symbol error
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT s.id").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "kind", "name", "signature", "body", "line_start", "line_end", "receiver", "path", "package"}).
+			AddRow("bad-id", "func", "X", "", "", 1, 1, "", "f.go", "."),
+	)
+	_, err = svc.List(context.Background(), QueryOptions{PackagePath: "."}, 10)
+	if err == nil || !strings.Contains(err.Error(), "scan list symbol") {
+		t.Fatalf("expected scan list symbol error, got %v", err)
+	}
+
+	// iterate list symbols error
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT s.id").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "kind", "name", "signature", "body", "line_start", "line_end", "receiver", "path", "package"}).
+			AddRow(1, "func", "X", "", "", 1, 1, "", "f.go", ".").
+			RowError(0, errors.New("list iter fail")),
+	)
+	_, err = svc.List(context.Background(), QueryOptions{PackagePath: "."}, 10)
+	if err == nil || !strings.Contains(err.Error(), "iterate list symbols") {
+		t.Fatalf("expected iterate list symbols error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
 func TestSuggestionsAndDirectDepsScanAndRowsErrors(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

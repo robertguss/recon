@@ -147,6 +147,210 @@ func TestFindExactQueryError(t *testing.T) {
 	}
 }
 
+func TestFindFileFilterSuffixMatch(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// "Ambig" in file "other.go" (file_id=2) should match --file "other.go"
+	res, err := NewService(conn).Find(context.Background(), "Ambig", QueryOptions{FilePath: "other.go"})
+	if err != nil {
+		t.Fatalf("Find with suffix file filter error: %v", err)
+	}
+	if res.Symbol.FilePath != "other.go" {
+		t.Fatalf("expected file other.go, got %s", res.Symbol.FilePath)
+	}
+
+	// Full path should still work
+	res, err = NewService(conn).Find(context.Background(), "Target", QueryOptions{FilePath: "main.go"})
+	if err != nil {
+		t.Fatalf("Find with exact file filter error: %v", err)
+	}
+	if res.Symbol.Name != "Target" {
+		t.Fatalf("expected Target, got %s", res.Symbol.Name)
+	}
+
+	// Path with slash should do substring match
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'pkg/sub','sub','example.com/recon/pkg/sub',1,5,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'pkg/sub/service.go','go',5,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','UniqueInSub','func()','func UniqueInSub(){}',1,1,1,'');`)
+
+	res, err = NewService(conn).Find(context.Background(), "UniqueInSub", QueryOptions{FilePath: "pkg/sub/service.go"})
+	if err != nil {
+		t.Fatalf("Find with path-containing file filter error: %v", err)
+	}
+	if res.Symbol.Name != "UniqueInSub" {
+		t.Fatalf("expected UniqueInSub, got %s", res.Symbol.Name)
+	}
+
+	// Filename-only should match a file stored with directory prefix
+	res, err = NewService(conn).Find(context.Background(), "UniqueInSub", QueryOptions{FilePath: "service.go"})
+	if err != nil {
+		t.Fatalf("Find with filename-only suffix filter error: %v", err)
+	}
+	if res.Symbol.Name != "UniqueInSub" {
+		t.Fatalf("expected UniqueInSub via suffix match, got %s", res.Symbol.Name)
+	}
+}
+
+func TestListByPackage(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total < 3 {
+		t.Fatalf("expected at least 3 symbols in root package, got %d", result.Total)
+	}
+	if result.Limit != 50 {
+		t.Fatalf("expected limit 50, got %d", result.Limit)
+	}
+	// Symbols should not have bodies in list mode
+	for _, s := range result.Symbols {
+		if s.Body != "" {
+			t.Fatalf("expected empty body in list mode, got body for %s", s.Name)
+		}
+	}
+}
+
+func TestListByKind(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{Kind: "method"}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("expected 1 method, got %d", result.Total)
+	}
+	if result.Symbols[0].Kind != "method" {
+		t.Fatalf("expected method kind, got %s", result.Symbols[0].Kind)
+	}
+}
+
+func TestListByFile(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{FilePath: "main.go"}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total < 2 {
+		t.Fatalf("expected at least 2 symbols in main.go, got %d", result.Total)
+	}
+}
+
+func TestListNoFiltersReturnsError(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	_, err := NewService(conn).List(context.Background(), QueryOptions{}, 50)
+	if err == nil {
+		t.Fatal("expected error for list with no filters")
+	}
+}
+
+func TestListRespectsLimit(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 2)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(result.Symbols) > 2 {
+		t.Fatalf("expected at most 2 symbols, got %d", len(result.Symbols))
+	}
+	if result.Total < 3 {
+		t.Fatalf("expected total >= 3, got %d", result.Total)
+	}
+}
+
+func TestFindReceiverDotSyntax(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// "T.Ambig" should match the method with receiver T
+	res, err := NewService(conn).Find(context.Background(), "T.Ambig", QueryOptions{})
+	if err != nil {
+		t.Fatalf("Find T.Ambig error: %v", err)
+	}
+	if res.Symbol.Receiver != "T" || res.Symbol.Name != "Ambig" {
+		t.Fatalf("expected T.Ambig, got %s.%s", res.Symbol.Receiver, res.Symbol.Name)
+	}
+
+	// Plain "Ambig" should still be ambiguous (2 matches)
+	_, err = NewService(conn).Find(context.Background(), "Ambig", QueryOptions{})
+	if _, ok := err.(AmbiguousError); !ok {
+		t.Fatalf("expected AmbiguousError for plain Ambig, got %T (%v)", err, err)
+	}
+
+	// "X.NotExist" should be not found
+	_, err = NewService(conn).Find(context.Background(), "X.NotExist", QueryOptions{})
+	if _, ok := err.(NotFoundError); !ok {
+		t.Fatalf("expected NotFoundError for X.NotExist, got %T (%v)", err, err)
+	}
+}
+
+func TestListDefaultLimit(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 0)
+	if err != nil {
+		t.Fatalf("List with zero limit error: %v", err)
+	}
+	if result.Limit != 50 {
+		t.Fatalf("expected default limit 50, got %d", result.Limit)
+	}
+}
+
+func TestListCountError(t *testing.T) {
+	root := t.TempDir()
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	conn.Close()
+	if _, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 10); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestListByFileWithSlash(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a symbol in a subdirectory file
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'pkg/sub','sub','example.com/recon/pkg/sub',1,5,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'pkg/sub/service.go','go',5,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','SubFunc','func()','func SubFunc(){}',1,1,1,'');`)
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{FilePath: "pkg/sub/service.go"}, 50)
+	if err != nil {
+		t.Fatalf("List with slash file filter error: %v", err)
+	}
+	if result.Total != 1 || result.Symbols[0].Name != "SubFunc" {
+		t.Fatalf("expected SubFunc, got %+v", result)
+	}
+}
+
+func TestMatchFilePathHasSuffix(t *testing.T) {
+	// Test the HasSuffix branch: filter with slash that's a suffix but not exact match
+	if !matchFilePath("internal/pkg/service.go", "pkg/service.go") {
+		t.Fatal("expected suffix match for pkg/service.go")
+	}
+	if matchFilePath("internal/pkg/service.go", "other/service.go") {
+		t.Fatal("expected no match for other/service.go")
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {

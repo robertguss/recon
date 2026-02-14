@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/robertguss/recon/internal/db"
@@ -19,11 +22,24 @@ type BuildOptions struct {
 
 type Payload struct {
 	Project         ProjectInfo      `json:"project"`
+	Architecture    Architecture     `json:"architecture"`
 	Freshness       Freshness        `json:"freshness"`
 	Summary         Summary          `json:"summary"`
 	Modules         []ModuleSummary  `json:"modules"`
 	ActiveDecisions []DecisionDigest `json:"active_decisions"`
+	ActivePatterns  []PatternDigest  `json:"active_patterns"`
+	RecentActivity  []RecentFile     `json:"recent_activity"`
 	Warnings        []string         `json:"warnings,omitempty"`
+}
+
+type RecentFile struct {
+	File         string `json:"file"`
+	LastModified string `json:"last_modified"`
+}
+
+type Architecture struct {
+	EntryPoints    []string `json:"entry_points"`
+	DependencyFlow string   `json:"dependency_flow"`
 }
 
 type ProjectInfo struct {
@@ -48,13 +64,23 @@ type Summary struct {
 }
 
 type ModuleSummary struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	FileCount int    `json:"file_count"`
-	LineCount int    `json:"line_count"`
+	Path          string `json:"path"`
+	Name          string `json:"name"`
+	FileCount     int    `json:"file_count"`
+	LineCount     int    `json:"line_count"`
+	Heat          string `json:"heat"`
+	RecentCommits int    `json:"recent_commits"`
 }
 
 type DecisionDigest struct {
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+	UpdatedAt  string `json:"updated_at"`
+	Drift      string `json:"drift_status"`
+}
+
+type PatternDigest struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
 	Confidence string `json:"confidence"`
@@ -84,6 +110,8 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		},
 		Modules:         []ModuleSummary{},
 		ActiveDecisions: []DecisionDigest{},
+		ActivePatterns:  []PatternDigest{},
+		RecentActivity:  []RecentFile{},
 	}
 
 	if opts.MaxModules <= 0 {
@@ -102,6 +130,14 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 	if err := s.loadDecisions(ctx, opts.MaxDecisions, &payload); err != nil {
 		return Payload{}, err
 	}
+	if err := s.loadPatterns(ctx, 5, &payload); err != nil {
+		return Payload{}, err
+	}
+	if err := s.loadArchitecture(ctx, &payload); err != nil {
+		return Payload{}, err
+	}
+	s.loadModuleHeat(ctx, opts.ModuleRoot, &payload)
+	s.loadRecentActivity(ctx, opts.ModuleRoot, &payload)
 
 	state, exists, err := db.LoadSyncState(ctx, s.db)
 	if err != nil {
@@ -227,4 +263,174 @@ LIMIT ?;
 		return fmt.Errorf("iterate decision rows: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) loadPatterns(ctx context.Context, limit int, payload *Payload) error {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.id, p.title, p.confidence, p.updated_at, COALESCE(e.drift_status, 'ok')
+FROM patterns p
+LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
+WHERE p.status = 'active'
+ORDER BY p.updated_at DESC
+LIMIT ?;
+`, limit)
+	if err != nil {
+		return fmt.Errorf("query patterns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p PatternDigest
+		if err := rows.Scan(&p.ID, &p.Title, &p.Confidence, &p.UpdatedAt, &p.Drift); err != nil {
+			return fmt.Errorf("scan pattern row: %w", err)
+		}
+		payload.ActivePatterns = append(payload.ActivePatterns, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate pattern rows: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) loadArchitecture(ctx context.Context, payload *Payload) error {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT f.path
+FROM files f
+JOIN packages p ON p.id = f.package_id
+WHERE p.name = 'main' AND f.path LIKE '%main.go'
+ORDER BY f.path;
+`)
+	if err != nil {
+		return fmt.Errorf("query entry points: %w", err)
+	}
+	defer rows.Close()
+
+	entryPoints := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return fmt.Errorf("scan entry point: %w", err)
+		}
+		entryPoints = append(entryPoints, path)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate entry points: %w", err)
+	}
+
+	depRows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT p1.path AS from_pkg, p2.path AS to_pkg
+FROM imports i
+JOIN files f ON f.id = i.from_file_id
+JOIN packages p1 ON p1.id = f.package_id
+JOIN packages p2 ON p2.id = i.to_package_id
+WHERE p1.id != p2.id
+ORDER BY p1.path, p2.path;
+`)
+	if err != nil {
+		return fmt.Errorf("query dependency flow: %w", err)
+	}
+	defer depRows.Close()
+
+	flowParts := map[string][]string{}
+	for depRows.Next() {
+		var from, to string
+		if err := depRows.Scan(&from, &to); err != nil {
+			return fmt.Errorf("scan dep flow: %w", err)
+		}
+		flowParts[from] = append(flowParts[from], to)
+	}
+	if err := depRows.Err(); err != nil {
+		return fmt.Errorf("iterate dep flow: %w", err)
+	}
+
+	flow := formatDependencyFlow(flowParts)
+	payload.Architecture = Architecture{EntryPoints: entryPoints, DependencyFlow: flow}
+	return nil
+}
+
+func formatDependencyFlow(deps map[string][]string) string {
+	if len(deps) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(deps))
+	for from, tos := range deps {
+		if len(tos) == 1 {
+			parts = append(parts, from+" → "+tos[0])
+		} else {
+			parts = append(parts, from+" → {"+strings.Join(tos, ", ")+"}")
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ")
+}
+
+func (s *Service) loadModuleHeat(ctx context.Context, moduleRoot string, payload *Payload) {
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=2 weeks ago", "--name-only", "--pretty=format:")
+	out, err := cmd.Output()
+	if err != nil {
+		return // Non-fatal: heat is optional
+	}
+
+	counts := map[string]int{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		dir := filepath.Dir(line)
+		if dir == "." {
+			counts["."]++
+		} else {
+			for _, m := range payload.Modules {
+				if strings.HasPrefix(filepath.ToSlash(dir), m.Path) || (m.Path == "." && !strings.Contains(dir, "/")) {
+					counts[m.Path]++
+					break
+				}
+			}
+		}
+	}
+
+	for i := range payload.Modules {
+		c := counts[payload.Modules[i].Path]
+		payload.Modules[i].RecentCommits = c
+		switch {
+		case c >= 4:
+			payload.Modules[i].Heat = "hot"
+		case c >= 1:
+			payload.Modules[i].Heat = "warm"
+		default:
+			payload.Modules[i].Heat = "cold"
+		}
+	}
+}
+
+func (s *Service) loadRecentActivity(ctx context.Context, moduleRoot string, payload *Payload) {
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "-n", "20", "--pretty=format:%aI", "--name-only", "--diff-filter=ACMR")
+	out, err := cmd.Output()
+	if err != nil {
+		return // Non-fatal
+	}
+
+	seen := map[string]bool{}
+	activity := []RecentFile{}
+	var currentDate string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// ISO date lines start with digit and have dash at position 4
+		if len(line) > 10 && line[4] == '-' {
+			currentDate = line
+			continue
+		}
+		if !seen[line] && currentDate != "" {
+			seen[line] = true
+			activity = append(activity, RecentFile{File: line, LastModified: currentDate})
+			if len(activity) >= 5 {
+				break
+			}
+		}
+	}
+	payload.RecentActivity = activity
 }

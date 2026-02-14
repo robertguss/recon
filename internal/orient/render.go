@@ -11,6 +11,12 @@ func RenderText(payload Payload) string {
 	fmt.Fprintf(&b, "Project: %s\n", payload.Project.Name)
 	fmt.Fprintf(&b, "Language: %s\n", payload.Project.Language)
 	fmt.Fprintf(&b, "Module: %s\n", payload.Project.ModulePath)
+	if len(payload.Architecture.EntryPoints) > 0 {
+		fmt.Fprintf(&b, "Entry points: %s\n", strings.Join(payload.Architecture.EntryPoints, ", "))
+	}
+	if payload.Architecture.DependencyFlow != "" {
+		fmt.Fprintf(&b, "Dependency flow: %s\n", payload.Architecture.DependencyFlow)
+	}
 	b.WriteString("\n")
 
 	if payload.Freshness.IsStale {
@@ -32,8 +38,16 @@ func RenderText(payload Payload) string {
 	if len(payload.Modules) == 0 {
 		b.WriteString("- (none)\n")
 	} else {
+		printedModule := false
 		for _, m := range payload.Modules {
-			fmt.Fprintf(&b, "- %s (%s): %d files, %d lines\n", m.Path, m.Name, m.FileCount, m.LineCount)
+			if m.Heat == "cold" {
+				continue
+			}
+			printedModule = true
+			fmt.Fprintf(&b, "- %s (%s): %d files, %d lines [%s]\n", m.Path, m.Name, m.FileCount, m.LineCount, strings.ToUpper(m.Heat))
+		}
+		if !printedModule {
+			fmt.Fprintf(&b, "- (none)\n")
 		}
 	}
 	b.WriteString("\n")
@@ -44,6 +58,20 @@ func RenderText(payload Payload) string {
 	} else {
 		for _, d := range payload.ActiveDecisions {
 			fmt.Fprintf(&b, "- #%d %s [%s] drift=%s updated=%s\n", d.ID, d.Title, d.Confidence, d.Drift, d.UpdatedAt)
+		}
+	}
+
+	if len(payload.ActivePatterns) > 0 {
+		b.WriteString("\nActive patterns:\n")
+		for _, p := range payload.ActivePatterns {
+			fmt.Fprintf(&b, "- #%d %s [%s] drift=%s\n", p.ID, p.Title, p.Confidence, p.Drift)
+		}
+	}
+
+	if len(payload.RecentActivity) > 0 {
+		b.WriteString("\nRecent activity:\n")
+		for _, a := range payload.RecentActivity {
+			fmt.Fprintf(&b, "- %s (%s)\n", a.File, a.LastModified)
 		}
 	}
 
