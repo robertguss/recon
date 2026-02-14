@@ -278,6 +278,33 @@ func TestRunMigrationsInjectedErrors(t *testing.T) {
 	}
 }
 
+func TestMigration003PatternsTable(t *testing.T) {
+	root := t.TempDir()
+	if _, err := EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := Open(DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	// Verify patterns table exists
+	_, err = conn.Exec(`INSERT INTO patterns (title, description, confidence, status, created_at, updated_at) VALUES ('test', 'desc', 'medium', 'active', 'x', 'x')`)
+	if err != nil {
+		t.Fatalf("patterns table should exist: %v", err)
+	}
+
+	// Verify pattern_files table exists
+	_, err = conn.Exec(`INSERT INTO pattern_files (pattern_id, file_path) VALUES (1, 'main.go')`)
+	if err != nil {
+		t.Fatalf("pattern_files table should exist: %v", err)
+	}
+}
+
 func TestRunMigrationsUpgradesLegacySymbolDepsSchema(t *testing.T) {
 	root := t.TempDir()
 	conn, err := Open(filepath.Join(root, "legacy.db"))

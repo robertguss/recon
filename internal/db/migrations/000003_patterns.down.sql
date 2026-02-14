@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS pattern_files;
+DROP TABLE IF EXISTS patterns;
