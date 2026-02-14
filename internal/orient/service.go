@@ -27,6 +27,7 @@ type Payload struct {
 	Summary         Summary          `json:"summary"`
 	Modules         []ModuleSummary  `json:"modules"`
 	ActiveDecisions []DecisionDigest `json:"active_decisions"`
+	ActivePatterns  []PatternDigest  `json:"active_patterns"`
 	RecentActivity  []RecentFile     `json:"recent_activity"`
 	Warnings        []string         `json:"warnings,omitempty"`
 }
@@ -79,6 +80,14 @@ type DecisionDigest struct {
 	Drift      string `json:"drift_status"`
 }
 
+type PatternDigest struct {
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+	UpdatedAt  string `json:"updated_at"`
+	Drift      string `json:"drift_status"`
+}
+
 type Service struct {
 	db *sql.DB
 }
@@ -101,6 +110,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		},
 		Modules:         []ModuleSummary{},
 		ActiveDecisions: []DecisionDigest{},
+		ActivePatterns:  []PatternDigest{},
 		RecentActivity:  []RecentFile{},
 	}
 
@@ -118,6 +128,9 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		return Payload{}, err
 	}
 	if err := s.loadDecisions(ctx, opts.MaxDecisions, &payload); err != nil {
+		return Payload{}, err
+	}
+	if err := s.loadPatterns(ctx, 5, &payload); err != nil {
 		return Payload{}, err
 	}
 	if err := s.loadArchitecture(ctx, &payload); err != nil {
@@ -248,6 +261,33 @@ LIMIT ?;
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate decision rows: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) loadPatterns(ctx context.Context, limit int, payload *Payload) error {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.id, p.title, p.confidence, p.updated_at, COALESCE(e.drift_status, 'ok')
+FROM patterns p
+LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
+WHERE p.status = 'active'
+ORDER BY p.updated_at DESC
+LIMIT ?;
+`, limit)
+	if err != nil {
+		return fmt.Errorf("query patterns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p PatternDigest
+		if err := rows.Scan(&p.ID, &p.Title, &p.Confidence, &p.UpdatedAt, &p.Drift); err != nil {
+			return fmt.Errorf("scan pattern row: %w", err)
+		}
+		payload.ActivePatterns = append(payload.ActivePatterns, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate pattern rows: %w", err)
 	}
 	return nil
 }

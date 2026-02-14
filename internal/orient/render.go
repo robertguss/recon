@@ -56,6 +56,13 @@ func RenderText(payload Payload) string {
 		}
 	}
 
+	if len(payload.ActivePatterns) > 0 {
+		b.WriteString("\nActive patterns:\n")
+		for _, p := range payload.ActivePatterns {
+			fmt.Fprintf(&b, "- #%d %s [%s] drift=%s\n", p.ID, p.Title, p.Confidence, p.Drift)
+		}
+	}
+
 	if len(payload.RecentActivity) > 0 {
 		b.WriteString("\nRecent activity:\n")
 		for _, a := range payload.RecentActivity {

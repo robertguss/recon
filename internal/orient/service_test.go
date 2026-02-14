@@ -322,6 +322,36 @@ func TestBuildArchitectureSection(t *testing.T) {
 	}
 }
 
+func TestOrientShowsActivePatterns(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	// Seed an active pattern
+	_, _ = conn.Exec(`INSERT INTO patterns(id,title,description,confidence,status,created_at,updated_at) VALUES (1,'Error wrapping','Use fmt.Errorf with %%w','high','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');`)
+	_, _ = conn.Exec(`INSERT INTO evidence(entity_type,entity_id,summary,drift_status) VALUES ('pattern',1,'grep finds %%w usage','ok');`)
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.ActivePatterns) == 0 {
+		t.Fatal("expected active patterns in orient output")
+	}
+	if payload.ActivePatterns[0].Title != "Error wrapping" {
+		t.Fatalf("expected 'Error wrapping', got %q", payload.ActivePatterns[0].Title)
+	}
+
+	// Verify text rendering includes patterns
+	text := RenderText(payload)
+	if !strings.Contains(text, "Error wrapping") {
+		t.Fatalf("expected text to contain pattern title, got:\n%s", text)
+	}
+}
+
 func TestBuildRecentActivity(t *testing.T) {
 	root := t.TempDir()
 	run := func(args ...string) {
