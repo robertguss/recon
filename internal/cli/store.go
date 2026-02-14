@@ -22,9 +22,5 @@ func openExistingDB(app *App) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.RunMigrations(conn); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
 	return conn, nil
 }

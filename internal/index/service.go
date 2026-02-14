@@ -173,8 +173,7 @@ ON CONFLICT(file_id, kind, name, receiver) DO UPDATE SET
     line_start = excluded.line_start,
     line_end = excluded.line_end,
     exported = excluded.exported;
-`, fileID, rec.Kind, rec.Name, rec.Signature, rec.Body, rec.LineStart, rec.LineEnd, boolToInt(rec.Exported), rec.Receiver)
-				if err != nil {
+`, fileID, rec.Kind, rec.Name, rec.Signature, rec.Body, rec.LineStart, rec.LineEnd, boolToInt(rec.Exported), rec.Receiver); err != nil {
 					return SyncResult{}, fmt.Errorf("insert symbol %s: %w", rec.Name, err)
 				}
 
