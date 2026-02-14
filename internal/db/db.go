@@ -16,6 +16,8 @@ const (
 	DBFileName   = "recon.db"
 )
 
+var sqlOpen = sql.Open
+
 func ReconDir(root string) string {
 	return filepath.Join(root, ReconDirName)
 }
@@ -33,7 +35,7 @@ func EnsureReconDir(root string) (string, error) {
 }
 
 func Open(path string) (*sql.DB, error) {
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sqlOpen("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
 	}

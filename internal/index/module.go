@@ -9,8 +9,10 @@ import (
 	"strings"
 )
 
+var moduleAbsPath = filepath.Abs
+
 func FindModuleRoot(start string) (string, error) {
-	current, err := filepath.Abs(start)
+	current, err := moduleAbsPath(start)
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute path: %w", err)
 	}

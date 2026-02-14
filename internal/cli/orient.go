@@ -9,6 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	isInteractive = isInteractiveTTY
+	askYesNo      = promptYesNo
+)
+
 func newOrientCommand(app *App) *cobra.Command {
 	var jsonOut bool
 
@@ -31,8 +36,8 @@ func newOrientCommand(app *App) *cobra.Command {
 			}
 
 			if payload.Freshness.IsStale {
-				if isInteractiveTTY() {
-					runSync, err := promptYesNo("Index looks stale. Run recon sync now? [Y/n]: ", true)
+				if isInteractive() {
+					runSync, err := askYesNo("Index looks stale. Run recon sync now? [Y/n]: ", true)
 					if err != nil {
 						return fmt.Errorf("read stale prompt: %w", err)
 					}
