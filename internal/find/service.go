@@ -182,7 +182,7 @@ func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 		if opts.PackagePath != "" && match.Package != opts.PackagePath {
 			continue
 		}
-		if opts.FilePath != "" && normalizeFilePath(match.FilePath) != opts.FilePath {
+		if opts.FilePath != "" && !matchFilePath(normalizeFilePath(match.FilePath), opts.FilePath) {
 			continue
 		}
 		if opts.Kind != "" && strings.ToLower(match.Kind) != opts.Kind {
@@ -191,6 +191,18 @@ func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 		filtered = append(filtered, match)
 	}
 	return filtered
+}
+
+func matchFilePath(symbolPath, filter string) bool {
+	if symbolPath == filter {
+		return true
+	}
+	// No slash = suffix/filename match
+	if !strings.Contains(filter, "/") {
+		return filepath.Base(symbolPath) == filter
+	}
+	// Has slash = substring match against relative path
+	return strings.Contains(symbolPath, filter) || strings.HasSuffix(symbolPath, filter)
 }
 
 func (s *Service) suggestions(ctx context.Context, symbol string) ([]string, error) {

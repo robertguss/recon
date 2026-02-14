@@ -147,6 +147,51 @@ func TestFindExactQueryError(t *testing.T) {
 	}
 }
 
+func TestFindFileFilterSuffixMatch(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// "Ambig" in file "other.go" (file_id=2) should match --file "other.go"
+	res, err := NewService(conn).Find(context.Background(), "Ambig", QueryOptions{FilePath: "other.go"})
+	if err != nil {
+		t.Fatalf("Find with suffix file filter error: %v", err)
+	}
+	if res.Symbol.FilePath != "other.go" {
+		t.Fatalf("expected file other.go, got %s", res.Symbol.FilePath)
+	}
+
+	// Full path should still work
+	res, err = NewService(conn).Find(context.Background(), "Target", QueryOptions{FilePath: "main.go"})
+	if err != nil {
+		t.Fatalf("Find with exact file filter error: %v", err)
+	}
+	if res.Symbol.Name != "Target" {
+		t.Fatalf("expected Target, got %s", res.Symbol.Name)
+	}
+
+	// Path with slash should do substring match
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'pkg/sub','sub','example.com/recon/pkg/sub',1,5,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'pkg/sub/service.go','go',5,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','UniqueInSub','func()','func UniqueInSub(){}',1,1,1,'');`)
+
+	res, err = NewService(conn).Find(context.Background(), "UniqueInSub", QueryOptions{FilePath: "pkg/sub/service.go"})
+	if err != nil {
+		t.Fatalf("Find with path-containing file filter error: %v", err)
+	}
+	if res.Symbol.Name != "UniqueInSub" {
+		t.Fatalf("expected UniqueInSub, got %s", res.Symbol.Name)
+	}
+
+	// Filename-only should match a file stored with directory prefix
+	res, err = NewService(conn).Find(context.Background(), "UniqueInSub", QueryOptions{FilePath: "service.go"})
+	if err != nil {
+		t.Fatalf("Find with filename-only suffix filter error: %v", err)
+	}
+	if res.Symbol.Name != "UniqueInSub" {
+		t.Fatalf("expected UniqueInSub via suffix match, got %s", res.Symbol.Name)
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {
