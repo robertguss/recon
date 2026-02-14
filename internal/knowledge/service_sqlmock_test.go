@@ -190,3 +190,44 @@ func TestProposeAndVerifyDecisionSQLMockErrorBranches(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+func TestListDecisionsScanAndIterateErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	svc := NewService(db)
+
+	// query error
+	mock.ExpectQuery("SELECT d.id").WillReturnError(errors.New("query fail"))
+	_, err = svc.ListDecisions(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "query decisions") {
+		t.Fatalf("expected query decisions error, got %v", err)
+	}
+
+	// scan error
+	mock.ExpectQuery("SELECT d.id").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "confidence", "status", "drift", "updated_at"}).
+			AddRow("bad-id", "t", "h", "active", "ok", "2024-01-01"),
+	)
+	_, err = svc.ListDecisions(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "scan decision") {
+		t.Fatalf("expected scan decision error, got %v", err)
+	}
+
+	// rows.Err
+	mock.ExpectQuery("SELECT d.id").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "confidence", "status", "drift", "updated_at"}).
+			AddRow(1, "t", "h", "active", "ok", "2024-01-01").
+			RowError(0, errors.New("iter fail")),
+	)
+	_, err = svc.ListDecisions(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "iter fail") {
+		t.Fatalf("expected iterate error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

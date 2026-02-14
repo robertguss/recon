@@ -352,6 +352,119 @@ func TestOrientShowsActivePatterns(t *testing.T) {
 	}
 }
 
+func TestRenderTextAllSections(t *testing.T) {
+	payload := Payload{
+		Project:      ProjectInfo{Name: "proj", Language: "go", ModulePath: "example.com/proj"},
+		Architecture: Architecture{EntryPoints: []string{"cmd/main.go"}, DependencyFlow: "cmd → pkg"},
+		Freshness:    Freshness{IsStale: true, Reason: "stale", LastSyncAt: "2026-01-01T00:00:00Z"},
+		Summary:      Summary{FileCount: 1, SymbolCount: 2, PackageCount: 1, DecisionCount: 1},
+		Modules:      []ModuleSummary{},
+		ActiveDecisions: []DecisionDigest{
+			{ID: 1, Title: "d1", Confidence: "high", Drift: "ok", UpdatedAt: "2026-01-01T00:00:00Z"},
+		},
+		ActivePatterns: []PatternDigest{
+			{ID: 1, Title: "p1", Confidence: "medium", Drift: "ok"},
+		},
+		RecentActivity: []RecentFile{
+			{File: "main.go", LastModified: "2026-01-01T00:00:00Z"},
+		},
+		Warnings: []string{"something is wrong"},
+	}
+	text := RenderText(payload)
+	for _, want := range []string{
+		"Entry points: cmd/main.go",
+		"Dependency flow: cmd → pkg",
+		"STALE CONTEXT: stale",
+		"Last sync: 2026-01-01T00:00:00Z",
+		"- (none)", // Modules empty
+		"- #1 d1",
+		"Active patterns:",
+		"- #1 p1",
+		"Recent activity:",
+		"- main.go",
+		"Warnings:",
+		"- something is wrong",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in text, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestFormatDependencyFlowVariants(t *testing.T) {
+	// Empty
+	if got := formatDependencyFlow(nil); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+	// Single dep
+	got := formatDependencyFlow(map[string][]string{"cmd": {"pkg"}})
+	if !strings.Contains(got, "cmd → pkg") {
+		t.Fatalf("expected single dep flow, got %q", got)
+	}
+	// Multi dep
+	got = formatDependencyFlow(map[string][]string{"cmd": {"pkg1", "pkg2"}})
+	if !strings.Contains(got, "cmd → {pkg1, pkg2}") {
+		t.Fatalf("expected multi dep flow, got %q", got)
+	}
+}
+
+func TestBuildLoadPatternsError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	// Create tables needed for summary, modules, decisions, but make patterns table broken
+	_, _ = conn.Exec(`DROP TABLE IF EXISTS patterns;`)
+	if _, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root}); err == nil || !strings.Contains(err.Error(), "query patterns") {
+		t.Fatalf("expected patterns error, got %v", err)
+	}
+}
+
+func TestBuildRecentActivityCapsAtFive(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Tester")
+
+	// Create 7 unique files, each committed separately
+	for i := 0; i < 7; i++ {
+		name := fmt.Sprintf("file%d.go", i)
+		content := fmt.Sprintf("package main\nfunc F%d(){}\n", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		run("add", name)
+		run("commit", "-m", fmt.Sprintf("add %s", name))
+	}
+
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.RecentActivity) != 5 {
+		t.Fatalf("expected exactly 5 recent activity entries, got %d", len(payload.RecentActivity))
+	}
+}
+
 func TestBuildRecentActivity(t *testing.T) {
 	root := t.TempDir()
 	run := func(args ...string) {

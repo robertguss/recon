@@ -16,6 +16,9 @@ import (
 
 var marshalJSON = json.Marshal
 
+// ErrNotFound is returned when a decision or entity does not exist or is already archived.
+var ErrNotFound = fmt.Errorf("not found")
+
 type ProposeDecisionInput struct {
 	Title           string
 	Reasoning       string
@@ -247,7 +250,7 @@ func (s *Service) ArchiveDecision(ctx context.Context, id int64) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("decision %d not found or already archived", id)
+		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
 	}
 	return nil
 }

@@ -57,3 +57,83 @@ func TestLoadModulesAndDecisionsScanAndRowsErr(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+func TestLoadPatternsScanAndIterateErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	svc := NewService(db)
+	payload := &Payload{}
+
+	// iterate pattern rows error
+	mock.ExpectQuery("SELECT p.id, p.title, p.confidence, p.updated_at").WithArgs(5).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "confidence", "updated_at", "drift"}).
+			AddRow(1, "t", "h", "2024-01-01", "ok").
+			RowError(0, errors.New("pattern iter fail")),
+	)
+	if err := svc.loadPatterns(context.Background(), 5, payload); err == nil || !strings.Contains(err.Error(), "iterate pattern rows") {
+		t.Fatalf("expected iterate pattern rows error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestLoadArchitectureScanAndIterateErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	svc := NewService(db)
+	payload := &Payload{}
+
+	// scan entry point error
+	mock.ExpectQuery("SELECT f.path").WillReturnRows(
+		sqlmock.NewRows([]string{"path"}).AddRow(nil),
+	)
+	if err := svc.loadArchitecture(context.Background(), payload); err == nil || !strings.Contains(err.Error(), "scan entry point") {
+		t.Fatalf("expected scan entry point error, got %v", err)
+	}
+
+	// iterate entry points error
+	mock.ExpectQuery("SELECT f.path").WillReturnRows(
+		sqlmock.NewRows([]string{"path"}).
+			AddRow("main.go").
+			RowError(0, errors.New("entry iter fail")),
+	)
+	if err := svc.loadArchitecture(context.Background(), payload); err == nil || !strings.Contains(err.Error(), "iterate entry points") {
+		t.Fatalf("expected iterate entry points error, got %v", err)
+	}
+
+	// scan dep flow error
+	mock.ExpectQuery("SELECT f.path").WillReturnRows(
+		sqlmock.NewRows([]string{"path"}).AddRow("main.go"),
+	)
+	mock.ExpectQuery("SELECT DISTINCT p1.path").WillReturnRows(
+		sqlmock.NewRows([]string{"from_pkg", "to_pkg"}).AddRow(nil, nil),
+	)
+	if err := svc.loadArchitecture(context.Background(), payload); err == nil || !strings.Contains(err.Error(), "scan dep flow") {
+		t.Fatalf("expected scan dep flow error, got %v", err)
+	}
+
+	// iterate dep flow error
+	mock.ExpectQuery("SELECT f.path").WillReturnRows(
+		sqlmock.NewRows([]string{"path"}).AddRow("main.go"),
+	)
+	mock.ExpectQuery("SELECT DISTINCT p1.path").WillReturnRows(
+		sqlmock.NewRows([]string{"from_pkg", "to_pkg"}).
+			AddRow("a", "b").
+			RowError(0, errors.New("dep iter fail")),
+	)
+	if err := svc.loadArchitecture(context.Background(), payload); err == nil || !strings.Contains(err.Error(), "iterate dep flow") {
+		t.Fatalf("expected iterate dep flow error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

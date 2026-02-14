@@ -295,6 +295,62 @@ func TestFindReceiverDotSyntax(t *testing.T) {
 	}
 }
 
+func TestListDefaultLimit(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 0)
+	if err != nil {
+		t.Fatalf("List with zero limit error: %v", err)
+	}
+	if result.Limit != 50 {
+		t.Fatalf("expected default limit 50, got %d", result.Limit)
+	}
+}
+
+func TestListCountError(t *testing.T) {
+	root := t.TempDir()
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	conn.Close()
+	if _, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "."}, 10); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestListByFileWithSlash(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a symbol in a subdirectory file
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'pkg/sub','sub','example.com/recon/pkg/sub',1,5,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'pkg/sub/service.go','go',5,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','SubFunc','func()','func SubFunc(){}',1,1,1,'');`)
+
+	result, err := NewService(conn).List(context.Background(), QueryOptions{FilePath: "pkg/sub/service.go"}, 50)
+	if err != nil {
+		t.Fatalf("List with slash file filter error: %v", err)
+	}
+	if result.Total != 1 || result.Symbols[0].Name != "SubFunc" {
+		t.Fatalf("expected SubFunc, got %+v", result)
+	}
+}
+
+func TestMatchFilePathHasSuffix(t *testing.T) {
+	// Test the HasSuffix branch: filter with slash that's a suffix but not exact match
+	if !matchFilePath("internal/pkg/service.go", "pkg/service.go") {
+		t.Fatal("expected suffix match for pkg/service.go")
+	}
+	if matchFilePath("internal/pkg/service.go", "other/service.go") {
+		t.Fatal("expected no match for other/service.go")
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -79,7 +80,11 @@ func newDecideCommand(app *App) *cobra.Command {
 				err = knowledge.NewService(conn).ArchiveDecision(cmd.Context(), deleteID)
 				if err != nil {
 					if jsonOut {
-						_ = writeJSONError("not_found", err.Error(), map[string]any{"id": deleteID})
+						code := "internal_error"
+						if errors.Is(err, knowledge.ErrNotFound) {
+							code = "not_found"
+						}
+						_ = writeJSONError(code, err.Error(), map[string]any{"id": deleteID})
 						return ExitError{Code: 2}
 					}
 					return err
@@ -93,6 +98,15 @@ func newDecideCommand(app *App) *cobra.Command {
 
 			// Update mode
 			if updateID > 0 {
+				if !cmd.Flags().Changed("confidence") {
+					msg := "--confidence is required when using --update"
+					if jsonOut {
+						_ = writeJSONError("missing_argument", msg, map[string]any{"id": updateID})
+						return ExitError{Code: 2}
+					}
+					return ExitError{Code: 2, Message: msg}
+				}
+
 				conn, err := openExistingDB(app)
 				if err != nil {
 					if jsonOut {

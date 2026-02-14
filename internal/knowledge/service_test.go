@@ -349,6 +349,67 @@ func TestConfidenceDecaysOnDrift(t *testing.T) {
 	}
 }
 
+func TestRunCheckPublicSuccess(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	outcome := svc.RunCheckPublic(context.Background(), "file_exists", `{"path":"go.mod"}`, root)
+	if !outcome.Passed {
+		t.Fatalf("expected passed, got %+v", outcome)
+	}
+}
+
+func TestRunCheckPublicError(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	outcome := svc.RunCheckPublic(context.Background(), "unknown_type", `{}`, root)
+	if outcome.Passed {
+		t.Fatal("expected not passed for unknown check type")
+	}
+	if !strings.Contains(outcome.Details, "unsupported") {
+		t.Fatalf("expected unsupported error in details, got %q", outcome.Details)
+	}
+}
+
+func TestListDecisionsDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if _, err := svc.ListDecisions(context.Background()); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestArchiveDecisionDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if err := svc.ArchiveDecision(context.Background(), 1); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestUpdateConfidenceDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if err := svc.UpdateConfidence(context.Background(), 1, "high"); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
+func TestDecayConfidenceOnDriftDBError(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	svc := NewService(conn)
+	conn.Close()
+	if _, err := svc.DecayConfidenceOnDrift(context.Background()); err == nil {
+		t.Fatal("expected error on closed DB")
+	}
+}
+
 func TestProposeAndVerifyDecisionDBErrors(t *testing.T) {
 	root, conn := setupKnowledgeEnv(t)
 	svc := NewService(conn)
