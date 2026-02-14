@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/robertguss/recon/internal/db"
@@ -19,11 +21,17 @@ type BuildOptions struct {
 
 type Payload struct {
 	Project         ProjectInfo      `json:"project"`
+	Architecture    Architecture     `json:"architecture"`
 	Freshness       Freshness        `json:"freshness"`
 	Summary         Summary          `json:"summary"`
 	Modules         []ModuleSummary  `json:"modules"`
 	ActiveDecisions []DecisionDigest `json:"active_decisions"`
 	Warnings        []string         `json:"warnings,omitempty"`
+}
+
+type Architecture struct {
+	EntryPoints    []string `json:"entry_points"`
+	DependencyFlow string   `json:"dependency_flow"`
 }
 
 type ProjectInfo struct {
@@ -100,6 +108,9 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 		return Payload{}, err
 	}
 	if err := s.loadDecisions(ctx, opts.MaxDecisions, &payload); err != nil {
+		return Payload{}, err
+	}
+	if err := s.loadArchitecture(ctx, &payload); err != nil {
 		return Payload{}, err
 	}
 
@@ -227,4 +238,76 @@ LIMIT ?;
 		return fmt.Errorf("iterate decision rows: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) loadArchitecture(ctx context.Context, payload *Payload) error {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT f.path
+FROM files f
+JOIN packages p ON p.id = f.package_id
+WHERE p.name = 'main' AND f.path LIKE '%main.go'
+ORDER BY f.path;
+`)
+	if err != nil {
+		return fmt.Errorf("query entry points: %w", err)
+	}
+	defer rows.Close()
+
+	entryPoints := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return fmt.Errorf("scan entry point: %w", err)
+		}
+		entryPoints = append(entryPoints, path)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate entry points: %w", err)
+	}
+
+	depRows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT p1.path AS from_pkg, p2.path AS to_pkg
+FROM imports i
+JOIN files f ON f.id = i.from_file_id
+JOIN packages p1 ON p1.id = f.package_id
+JOIN packages p2 ON p2.id = i.to_package_id
+WHERE p1.id != p2.id
+ORDER BY p1.path, p2.path;
+`)
+	if err != nil {
+		return fmt.Errorf("query dependency flow: %w", err)
+	}
+	defer depRows.Close()
+
+	flowParts := map[string][]string{}
+	for depRows.Next() {
+		var from, to string
+		if err := depRows.Scan(&from, &to); err != nil {
+			return fmt.Errorf("scan dep flow: %w", err)
+		}
+		flowParts[from] = append(flowParts[from], to)
+	}
+	if err := depRows.Err(); err != nil {
+		return fmt.Errorf("iterate dep flow: %w", err)
+	}
+
+	flow := formatDependencyFlow(flowParts)
+	payload.Architecture = Architecture{EntryPoints: entryPoints, DependencyFlow: flow}
+	return nil
+}
+
+func formatDependencyFlow(deps map[string][]string) string {
+	if len(deps) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(deps))
+	for from, tos := range deps {
+		if len(tos) == 1 {
+			parts = append(parts, from+" → "+tos[0])
+		} else {
+			parts = append(parts, from+" → {"+strings.Join(tos, ", ")+"}")
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ")
 }

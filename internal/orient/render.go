@@ -11,6 +11,12 @@ func RenderText(payload Payload) string {
 	fmt.Fprintf(&b, "Project: %s\n", payload.Project.Name)
 	fmt.Fprintf(&b, "Language: %s\n", payload.Project.Language)
 	fmt.Fprintf(&b, "Module: %s\n", payload.Project.ModulePath)
+	if len(payload.Architecture.EntryPoints) > 0 {
+		fmt.Fprintf(&b, "Entry points: %s\n", strings.Join(payload.Architecture.EntryPoints, ", "))
+	}
+	if payload.Architecture.DependencyFlow != "" {
+		fmt.Fprintf(&b, "Dependency flow: %s\n", payload.Architecture.DependencyFlow)
+	}
 	b.WriteString("\n")
 
 	if payload.Freshness.IsStale {

@@ -229,3 +229,39 @@ func TestBuildWithGitRepoHeadBranchExplicit(t *testing.T) {
 		t.Fatalf("expected head change stale reason, got %+v", payload.Freshness)
 	}
 }
+
+func TestBuildArchitectureSection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "recon"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/recon: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "recon", "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	if _, err := index.NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(payload.Architecture.EntryPoints) == 0 {
+		t.Fatal("expected entry points")
+	}
+	found := false
+	for _, ep := range payload.Architecture.EntryPoints {
+		if strings.Contains(ep, "cmd/recon/main.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected cmd/recon/main.go in entry points, got %v", payload.Architecture.EntryPoints)
+	}
+}
