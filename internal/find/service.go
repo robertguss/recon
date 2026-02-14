@@ -161,9 +161,6 @@ func normalizeQueryOptions(opts QueryOptions) QueryOptions {
 		FilePath:    normalizeFilePath(opts.FilePath),
 		Kind:        strings.ToLower(strings.TrimSpace(opts.Kind)),
 	}
-	if normalized.PackagePath == "" {
-		normalized.PackagePath = strings.TrimSpace(opts.PackagePath)
-	}
 	return normalized
 }
 

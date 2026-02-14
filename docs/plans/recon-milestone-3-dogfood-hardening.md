@@ -115,54 +115,74 @@ Before/after evidence:
 
 - Pre-init JSON envelope consistency now holds across DB-backed commands:
 
-      $ /tmp/recon-dogfood find Missing --json
-      {
-        "error": {
-          "code": "not_initialized",
-          "details": { "path": ".../.recon/recon.db" }
-        }
-      }
+```shell
+$ /tmp/recon-dogfood find Missing --json
+{
+  "error": {
+    "code": "not_initialized",
+    "details": { "path": ".../.recon/recon.db" }
+  }
+}
+```
 
 - `find` not-found JSON list normalization:
 
-      $ (cd cortex_code && /tmp/recon-dogfood find DefinitelyMissingSymbol --json)
-      {
-        "error": {
-          "code": "not_found",
-          "details": {
-            "suggestions": []
-          }
-        }
-      }
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find DefinitelyMissingSymbol --json)
+{
+  "error": {
+    "code": "not_found",
+    "details": {
+      "suggestions": []
+    }
+  }
+}
+```
 
 - `find` dependency precision on real repo (`cortex_code`):
 
-      $ (cd cortex_code && /tmp/recon-dogfood find GenerateSessionID --json)
-      # dependencies length = 0 (no unrelated local Format methods)
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find GenerateSessionID --json)
+# dependencies length = 0 (no unrelated local Format methods)
+```
 
 - `find` disambiguation filters:
 
-      $ (cd cortex_code && /tmp/recon-dogfood find NewService --json)
-      # ambiguous (9 candidates)
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find NewService --json)
+# ambiguous (9 candidates)
+```
 
-      $ (cd cortex_code && /tmp/recon-dogfood find NewService --package internal/session --json)
-      # single symbol result (resolved)
+```shell
+$ (cd cortex_code && /tmp/recon-dogfood find NewService --package internal/session --json)
+# single symbol result (resolved)
+```
 
 - `decide` invalid-input non-persistence in real repo (`cortex_code`):
 
-      $ sqlite3 .recon/recon.db 'select count(*) from proposals;'
-      0
-      $ /tmp/recon-dogfood decide "invalid" --reasoning r --evidence-summary e --check-type nope --check-spec '{}' --json
-      # invalid_input
-      $ sqlite3 .recon/recon.db 'select count(*) from proposals;'
-      0
+```sql
+$ sqlite3 .recon/recon.db 'select count(*) from proposals;'
+0
+```
+
+```shell
+$ /tmp/recon-dogfood decide "invalid" --reasoning r --evidence-summary e --check-type nope --check-spec '{}' --json
+# invalid_input
+```
+
+```sql
+$ sqlite3 .recon/recon.db 'select count(*) from proposals;'
+0
+```
 
 Test/coverage validation:
 
-    go test ./...
-    go test ./... -coverprofile=coverage.out
-    go tool cover -func=coverage.out
-    total: (statements) 100.0%
+```shell
+go test ./...
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
+total: (statements) 100.0%
+```
 
 Milestone outcomes match the purpose: predictable JSON contracts, stricter input
 validation, improved find result quality at scale, and no invalid-input state
