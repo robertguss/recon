@@ -866,6 +866,51 @@ func TestNoPromptDisablesOrientPrompt(t *testing.T) {
 	}
 }
 
+func TestStatusCommand(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	// Before init
+	_, _, err := runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err == nil {
+		t.Fatal("expected error before init")
+	}
+
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// After init, before sync
+	out, _, err := runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if !strings.Contains(out, `"initialized": true`) {
+		t.Fatalf("expected initialized true, out=%q", out)
+	}
+
+	// After sync
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	out, _, err = runCommandWithCapture(t, newStatusCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("status --json after sync: %v", err)
+	}
+	if !strings.Contains(out, `"files"`) || !strings.Contains(out, `"symbols"`) {
+		t.Fatalf("expected counts, out=%q", out)
+	}
+
+	// Text output
+	out, _, err = runCommandWithCapture(t, newStatusCommand(app), nil)
+	if err != nil {
+		t.Fatalf("status text: %v", err)
+	}
+	if !strings.Contains(out, "Initialized: yes") {
+		t.Fatalf("expected text status, out=%q", out)
+	}
+}
+
 func TestDecideLifecycleFlags(t *testing.T) {
 	root := setupModuleRoot(t)
 	app := &App{Context: context.Background(), ModuleRoot: root}

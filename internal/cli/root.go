@@ -48,6 +48,7 @@ func NewRootCommand(ctx context.Context) (*cobra.Command, error) {
 	root.AddCommand(newDecideCommand(app))
 	root.AddCommand(newPatternCommand(app))
 	root.AddCommand(newRecallCommand(app))
+	root.AddCommand(newStatusCommand(app))
 
 	return root, nil
 }
