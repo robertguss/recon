@@ -123,3 +123,48 @@ func TestRecallErrorsAndScanItems(t *testing.T) {
 		t.Fatal("expected scan error from wrong columns")
 	}
 }
+
+func TestRecallSkipsArchivedDecisionInFTS(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	if _, err := conn.Exec(`UPDATE decisions SET status = 'archived' WHERE id = 1;`); err != nil {
+		t.Fatalf("archive seeded decision: %v", err)
+	}
+
+	res, err := NewService(conn).Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall archived decision: %v", err)
+	}
+	if len(res.Items) != 0 {
+		t.Fatalf("expected archived decision to be excluded, got %+v", res.Items)
+	}
+}
+
+func TestRecallLegacyQueriesWhenPatternsTableMissing(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	if _, err := conn.Exec(`DROP TABLE patterns;`); err != nil {
+		t.Fatalf("drop patterns table: %v", err)
+	}
+
+	svc := NewService(conn)
+	// FTS path should fall back to a decisions-only query on legacy DBs.
+	res, err := svc.Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall on legacy DB: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Title != "Use Cobra" {
+		t.Fatalf("unexpected legacy FTS result: %+v", res.Items)
+	}
+
+	// LIKE path should also stay functional without patterns.
+	items, err := svc.recallLike(context.Background(), "Cobra", 10)
+	if err != nil {
+		t.Fatalf("recallLike on legacy DB: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Use Cobra" {
+		t.Fatalf("unexpected legacy LIKE result: %+v", items)
+	}
+}

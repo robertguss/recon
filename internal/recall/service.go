@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 type RecallOptions struct {
@@ -67,9 +68,44 @@ LEFT JOIN decisions d ON d.id = search_index.entity_id AND search_index.entity_t
 LEFT JOIN patterns p ON p.id = search_index.entity_id AND search_index.entity_type = 'pattern'
 LEFT JOIN evidence e ON e.entity_type = search_index.entity_type AND e.entity_id = search_index.entity_id
 WHERE search_index MATCH ?
+  AND (
+    (search_index.entity_type = 'decision' AND d.status = 'active')
+    OR (search_index.entity_type = 'pattern' AND p.status = 'active')
+  )
 ORDER BY rank
 LIMIT ?;
-`, query, limit)
+	`, query, limit)
+	if err != nil {
+		if isMissingTableError(err, "patterns") {
+			return s.recallFTSLegacy(ctx, query, limit)
+		}
+		return nil, fmt.Errorf("fts recall query: %w", err)
+	}
+	defer rows.Close()
+
+	return scanItems(rows)
+}
+
+func (s *Service) recallFTSLegacy(ctx context.Context, query string, limit int) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT
+    search_index.entity_type,
+    search_index.entity_id,
+    search_index.title,
+    COALESCE(search_index.content, ''),
+    COALESCE(d.confidence, 'medium'),
+    COALESCE(d.updated_at, ''),
+    COALESCE(e.summary, ''),
+    COALESCE(e.drift_status, 'ok')
+FROM search_index
+LEFT JOIN decisions d ON d.id = search_index.entity_id AND search_index.entity_type = 'decision'
+LEFT JOIN evidence e ON e.entity_type = search_index.entity_type AND e.entity_id = search_index.entity_id
+WHERE search_index MATCH ?
+  AND search_index.entity_type = 'decision'
+  AND d.status = 'active'
+ORDER BY rank
+LIMIT ?;
+	`, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("fts recall query: %w", err)
 	}
@@ -94,13 +130,42 @@ LEFT JOIN evidence e2 ON e2.entity_type = 'pattern' AND e2.entity_id = p.id
 WHERE p.status = 'active' AND (p.title LIKE ? OR p.description LIKE ? OR e2.summary LIKE ?)
 ORDER BY updated_at DESC
 LIMIT ?;
-`, like, like, like, like, like, like, limit)
+	`, like, like, like, like, like, like, limit)
+	if err != nil {
+		if isMissingTableError(err, "patterns") {
+			return s.recallLikeLegacy(ctx, like, limit)
+		}
+		return nil, fmt.Errorf("fallback recall query: %w", err)
+	}
+	defer rows.Close()
+
+	return scanItems(rows)
+}
+
+func (s *Service) recallLikeLegacy(ctx context.Context, like string, limit int) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT 'decision' AS entity_type, d.id, d.title, d.reasoning, d.confidence, d.updated_at,
+       COALESCE(e.summary, ''), COALESCE(e.drift_status, 'ok')
+FROM decisions d
+LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+WHERE d.status = 'active' AND (d.title LIKE ? OR d.reasoning LIKE ? OR e.summary LIKE ?)
+ORDER BY updated_at DESC
+LIMIT ?;
+	`, like, like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("fallback recall query: %w", err)
 	}
 	defer rows.Close()
 
 	return scanItems(rows)
+}
+
+func isMissingTableError(err error, table string) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "no such table: "+strings.ToLower(table))
 }
 
 func scanItems(rows *sql.Rows) ([]Item, error) {
