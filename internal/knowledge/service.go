@@ -78,6 +78,12 @@ func (s *Service) ProposeAndVerifyDecision(ctx context.Context, in ProposeDecisi
 		return ProposeDecisionResult{}, fmt.Errorf("marshal proposal data: %w", err)
 	}
 
+	outcome := runCheckOutcome{Passed: false, Details: "unknown"}
+	outcome, err = s.runCheck(ctx, in)
+	if err != nil {
+		outcome = runCheckOutcome{Passed: false, Details: err.Error(), Baseline: map[string]any{"error": err.Error()}}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ProposeDecisionResult{}, fmt.Errorf("begin decision tx: %w", err)
@@ -94,12 +100,6 @@ VALUES (NULL, 'decision', ?, 'pending', ?);
 	proposalID, err := res.LastInsertId()
 	if err != nil {
 		return ProposeDecisionResult{}, fmt.Errorf("read proposal id: %w", err)
-	}
-
-	outcome := runCheckOutcome{Passed: false, Details: "unknown"}
-	outcome, err = s.runCheck(ctx, in)
-	if err != nil {
-		outcome = runCheckOutcome{Passed: false, Details: err.Error(), Baseline: map[string]any{"error": err.Error()}}
 	}
 
 	baselineJSON, err := marshalJSON(outcome.Baseline)

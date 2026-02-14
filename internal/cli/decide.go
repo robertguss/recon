@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/robertguss/recon/internal/knowledge"
 	"github.com/spf13/cobra"
@@ -14,6 +16,10 @@ func newDecideCommand(app *App) *cobra.Command {
 		evidenceSummary string
 		checkType       string
 		checkSpec       string
+		checkPath       string
+		checkSymbol     string
+		checkPattern    string
+		checkScope      string
 		jsonOut         bool
 	)
 
@@ -24,8 +30,22 @@ func newDecideCommand(app *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			title := args[0]
 
+			resolvedSpec, err := buildCheckSpec(checkType, checkSpec, checkPath, checkSymbol, checkPattern, checkScope)
+			if err != nil {
+				if jsonOut {
+					details := map[string]any{"check_type": checkType}
+					_ = writeJSONError("invalid_input", err.Error(), details)
+					return ExitError{Code: 2}
+				}
+				return err
+			}
+
 			conn, err := openExistingDB(app)
 			if err != nil {
+				if jsonOut {
+					_ = writeJSONError("internal_error", err.Error(), nil)
+					return ExitError{Code: 2}
+				}
 				return err
 			}
 			defer conn.Close()
@@ -36,45 +56,147 @@ func newDecideCommand(app *App) *cobra.Command {
 				Confidence:      confidence,
 				EvidenceSummary: evidenceSummary,
 				CheckType:       checkType,
-				CheckSpec:       checkSpec,
+				CheckSpec:       resolvedSpec,
 				ModuleRoot:      app.ModuleRoot,
 			})
 			if err != nil {
+				if jsonOut {
+					code, details := classifyDecideError(checkType, err)
+					_ = writeJSONError(code, err.Error(), details)
+					return ExitError{Code: 2}
+				}
 				return err
 			}
 
-				if jsonOut {
-					_ = writeJSON(result)
-					if !result.VerificationPassed {
-						return ExitError{Code: 2}
+			if jsonOut {
+				if !result.VerificationPassed {
+					errorCode := classifyDecideMessage(result.VerificationDetails)
+					details := map[string]any{
+						"proposal_id": result.ProposalID,
+						"check_type":  checkType,
 					}
-					return nil
+					_ = writeJSONError(errorCode, result.VerificationDetails, details)
+					return ExitError{Code: 2}
 				}
+				return writeJSON(result)
+			}
 
 			if result.Promoted {
 				fmt.Printf("Decision promoted: proposal=%d decision=%d\n", result.ProposalID, result.DecisionID)
 			} else {
 				fmt.Printf("Decision pending: proposal=%d\n", result.ProposalID)
-				}
-				fmt.Printf("Verification: passed=%v details=%s\n", result.VerificationPassed, result.VerificationDetails)
-				if !result.VerificationPassed {
-					return ExitError{Code: 2}
-				}
-				return nil
-			},
-		}
+			}
+			fmt.Printf("Verification: passed=%v details=%s\n", result.VerificationPassed, result.VerificationDetails)
+			if !result.VerificationPassed {
+				return ExitError{Code: 2}
+			}
+			return nil
+		},
+	}
 
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "Decision reasoning")
 	cmd.Flags().StringVar(&confidence, "confidence", "medium", "Confidence: low, medium, high")
 	cmd.Flags().StringVar(&evidenceSummary, "evidence-summary", "", "Evidence summary")
 	cmd.Flags().StringVar(&checkType, "check-type", "", "Verification check type: grep_pattern, symbol_exists, file_exists")
 	cmd.Flags().StringVar(&checkSpec, "check-spec", "", "Verification check spec JSON")
+	cmd.Flags().StringVar(&checkPath, "check-path", "", "Typed check field for file_exists: path")
+	cmd.Flags().StringVar(&checkSymbol, "check-symbol", "", "Typed check field for symbol_exists: symbol name")
+	cmd.Flags().StringVar(&checkPattern, "check-pattern", "", "Typed check field for grep_pattern: regex pattern")
+	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 
 	_ = cmd.MarkFlagRequired("reasoning")
 	_ = cmd.MarkFlagRequired("evidence-summary")
 	_ = cmd.MarkFlagRequired("check-type")
-	_ = cmd.MarkFlagRequired("check-spec")
 
 	return cmd
+}
+
+func buildCheckSpec(checkType string, checkSpec string, checkPath string, checkSymbol string, checkPattern string, checkScope string) (string, error) {
+	checkType = strings.TrimSpace(checkType)
+	checkSpec = strings.TrimSpace(checkSpec)
+	checkPath = strings.TrimSpace(checkPath)
+	checkSymbol = strings.TrimSpace(checkSymbol)
+	checkPattern = strings.TrimSpace(checkPattern)
+	checkScope = strings.TrimSpace(checkScope)
+
+	typedProvided := checkPath != "" || checkSymbol != "" || checkPattern != "" || checkScope != ""
+	if checkSpec != "" && typedProvided {
+		return "", fmt.Errorf("cannot combine --check-spec with typed check flags")
+	}
+	if checkSpec != "" {
+		return checkSpec, nil
+	}
+	if !typedProvided {
+		return "", fmt.Errorf("either --check-spec or typed check flags are required")
+	}
+
+	switch checkType {
+	case "file_exists":
+		if checkPath == "" {
+			return "", fmt.Errorf("--check-path is required for check-type file_exists")
+		}
+		if checkSymbol != "" || checkPattern != "" || checkScope != "" {
+			return "", fmt.Errorf("file_exists only supports --check-path")
+		}
+		return marshalCheckSpec(struct {
+			Path string `json:"path"`
+		}{Path: checkPath})
+	case "symbol_exists":
+		if checkSymbol == "" {
+			return "", fmt.Errorf("--check-symbol is required for check-type symbol_exists")
+		}
+		if checkPath != "" || checkPattern != "" || checkScope != "" {
+			return "", fmt.Errorf("symbol_exists only supports --check-symbol")
+		}
+		return marshalCheckSpec(struct {
+			Name string `json:"name"`
+		}{Name: checkSymbol})
+	case "grep_pattern":
+		if checkPattern == "" {
+			return "", fmt.Errorf("--check-pattern is required for check-type grep_pattern")
+		}
+		if checkPath != "" || checkSymbol != "" {
+			return "", fmt.Errorf("grep_pattern supports --check-pattern and optional --check-scope only")
+		}
+		return marshalCheckSpec(struct {
+			Pattern string `json:"pattern"`
+			Scope   string `json:"scope,omitempty"`
+		}{Pattern: checkPattern, Scope: checkScope})
+	default:
+		return "", fmt.Errorf("unsupported check type %q", checkType)
+	}
+}
+
+func marshalCheckSpec(v any) (string, error) {
+	spec, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("marshal check spec: %w", err)
+	}
+	return string(spec), nil
+}
+
+func classifyDecideError(checkType string, err error) (string, any) {
+	code := classifyDecideMessage(err.Error())
+	if code == "invalid_input" {
+		return code, map[string]any{"check_type": checkType}
+	}
+	return "internal_error", nil
+}
+
+func classifyDecideMessage(msg string) string {
+	switch {
+	case strings.Contains(msg, "unsupported check type"):
+		return "invalid_input"
+	case strings.Contains(msg, "check spec"):
+		return "invalid_input"
+	case strings.Contains(msg, "requires spec."):
+		return "invalid_input"
+	case strings.Contains(msg, "compile regex pattern"):
+		return "invalid_input"
+	case strings.Contains(msg, "requires spec"):
+		return "invalid_input"
+	default:
+		return "verification_failed"
+	}
 }

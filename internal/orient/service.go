@@ -33,11 +33,11 @@ type ProjectInfo struct {
 }
 
 type Freshness struct {
-	IsStale       bool   `json:"is_stale"`
-	Reason        string `json:"reason"`
-	LastSyncAt    string `json:"last_sync_at,omitempty"`
+	IsStale        bool   `json:"is_stale"`
+	Reason         string `json:"reason"`
+	LastSyncAt     string `json:"last_sync_at,omitempty"`
 	LastSyncCommit string `json:"last_sync_commit,omitempty"`
-	CurrentCommit string `json:"current_commit,omitempty"`
+	CurrentCommit  string `json:"current_commit,omitempty"`
 }
 
 type Summary struct {
@@ -82,6 +82,8 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 			ModulePath: modulePath,
 			Language:   "go",
 		},
+		Modules:         []ModuleSummary{},
+		ActiveDecisions: []DecisionDigest{},
 	}
 
 	if opts.MaxModules <= 0 {
