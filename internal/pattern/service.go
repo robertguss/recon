@@ -11,6 +11,8 @@ import (
 	"github.com/robertguss/recon/internal/knowledge"
 )
 
+var jsonMarshal = json.Marshal
+
 type ProposePatternInput struct {
 	Title           string
 	Description     string
@@ -71,7 +73,7 @@ func (s *Service) ProposeAndVerifyPattern(ctx context.Context, in ProposePattern
 		"check_type":       in.CheckType,
 		"check_spec":       in.CheckSpec,
 	}
-	entityDataJSON, err := json.Marshal(entityData)
+	entityDataJSON, err := jsonMarshal(entityData)
 	if err != nil {
 		return ProposePatternResult{}, fmt.Errorf("marshal proposal data: %w", err)
 	}
@@ -91,8 +93,8 @@ VALUES (NULL, 'pattern', ?, 'pending', ?);
 	}
 	proposalID, _ := res.LastInsertId()
 
-	baselineJSON, _ := json.Marshal(outcome.Baseline)
-	lastResultJSON, _ := json.Marshal(map[string]any{"passed": outcome.Passed, "details": outcome.Details})
+	baselineJSON, _ := jsonMarshal(outcome.Baseline)
+	lastResultJSON, _ := jsonMarshal(map[string]any{"passed": outcome.Passed, "details": outcome.Details})
 
 	if outcome.Passed {
 		patternRes, err := tx.ExecContext(ctx, `

@@ -186,3 +186,30 @@ func TestProposePatternSQLMockNotPromotedErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestProposePatternMarshalProposalDataError(t *testing.T) {
+	mockDB, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer mockDB.Close()
+
+	orig := jsonMarshal
+	jsonMarshal = func(any) ([]byte, error) {
+		return nil, errors.New("marshal fail")
+	}
+	t.Cleanup(func() { jsonMarshal = orig })
+
+	_, err = NewService(mockDB).ProposeAndVerifyPattern(context.Background(), ProposePatternInput{
+		Title:           "t",
+		Description:     "d",
+		Confidence:      "medium",
+		EvidenceSummary: "e",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "marshal proposal data") {
+		t.Fatalf("expected marshal proposal data error, got %v", err)
+	}
+}

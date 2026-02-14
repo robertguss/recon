@@ -591,6 +591,19 @@ func TestM4DecideUpdateJSONError(t *testing.T) {
 	}
 }
 
+func TestM4DecideUpdateJSONInvalidConfidence(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", "1", "--confidence", "invalid", "--json",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid confidence")
+	}
+	if !strings.Contains(out, `"code": "invalid_input"`) {
+		t.Fatalf("expected invalid_input envelope, out=%q", out)
+	}
+}
+
 func TestM4DecideListInternalErrorJSON(t *testing.T) {
 	_, app := m4SetupBrokenDB(t)
 	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{"--list", "--json"})
