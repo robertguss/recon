@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/robertguss/recon/internal/index"
 	"github.com/spf13/cobra"
 )
+
+var runSync = func(ctx context.Context, conn *sql.DB, moduleRoot string) (index.SyncResult, error) {
+	return index.NewService(conn).Sync(ctx, moduleRoot)
+}
 
 func newSyncCommand(app *App) *cobra.Command {
 	var jsonOut bool
@@ -20,7 +26,7 @@ func newSyncCommand(app *App) *cobra.Command {
 			}
 			defer conn.Close()
 
-			result, err := index.NewService(conn).Sync(cmd.Context(), app.ModuleRoot)
+			result, err := runSync(cmd.Context(), conn, app.ModuleRoot)
 			if err != nil {
 				return err
 			}

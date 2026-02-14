@@ -12,6 +12,11 @@ import (
 	"strings"
 )
 
+var (
+	filepathRel = filepath.Rel
+	readFile    = os.ReadFile
+)
+
 type SourceFile struct {
 	AbsPath string
 	RelPath string
@@ -43,13 +48,13 @@ func CollectEligibleGoFiles(moduleRoot string) ([]SourceFile, error) {
 			return nil
 		}
 
-		rel, err := filepath.Rel(moduleRoot, path)
+		rel, err := filepathRel(moduleRoot, path)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
 
-		content, err := os.ReadFile(path)
+		content, err := readFile(path)
 		if err != nil {
 			return err
 		}

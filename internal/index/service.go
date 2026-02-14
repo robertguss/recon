@@ -18,6 +18,11 @@ import (
 	"github.com/robertguss/recon/internal/db"
 )
 
+var (
+	collectEligibleFiles = CollectEligibleGoFiles
+	importPathUnquote    = strconv.Unquote
+)
+
 type SyncResult struct {
 	IndexedFiles    int       `json:"indexed_files"`
 	IndexedSymbols  int       `json:"indexed_symbols"`
@@ -42,7 +47,7 @@ func (s *Service) Sync(ctx context.Context, moduleRoot string) (SyncResult, erro
 		return SyncResult{}, err
 	}
 
-	files, err := CollectEligibleGoFiles(moduleRoot)
+	files, err := collectEligibleFiles(moduleRoot)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -126,7 +131,7 @@ VALUES (?, ?, 'go', ?, ?, ?, ?);
 		}
 
 		for _, imp := range parsed.Imports {
-			toPath, err := strconv.Unquote(imp.Path.Value)
+			toPath, err := importPathUnquote(imp.Path.Value)
 			if err != nil {
 				toPath = strings.Trim(imp.Path.Value, "\"")
 			}

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 
@@ -12,6 +14,13 @@ import (
 var (
 	isInteractive = isInteractiveTTY
 	askYesNo      = promptYesNo
+	buildOrient   = func(ctx context.Context, conn *sql.DB, moduleRoot string) (orient.Payload, error) {
+		return orient.NewService(conn).Build(ctx, orient.BuildOptions{ModuleRoot: moduleRoot, MaxModules: 8, MaxDecisions: 5})
+	}
+	runOrientSync = func(ctx context.Context, conn *sql.DB, moduleRoot string) error {
+		_, err := index.NewService(conn).Sync(ctx, moduleRoot)
+		return err
+	}
 )
 
 func newOrientCommand(app *App) *cobra.Command {
@@ -27,10 +36,7 @@ func newOrientCommand(app *App) *cobra.Command {
 			}
 			defer conn.Close()
 
-			syncSvc := index.NewService(conn)
-			orientSvc := orient.NewService(conn)
-
-			payload, err := orientSvc.Build(cmd.Context(), orient.BuildOptions{ModuleRoot: app.ModuleRoot, MaxModules: 8, MaxDecisions: 5})
+			payload, err := buildOrient(cmd.Context(), conn, app.ModuleRoot)
 			if err != nil {
 				return err
 			}
@@ -42,10 +48,10 @@ func newOrientCommand(app *App) *cobra.Command {
 						return fmt.Errorf("read stale prompt: %w", err)
 					}
 					if runSync {
-						if _, err := syncSvc.Sync(cmd.Context(), app.ModuleRoot); err != nil {
+						if err := runOrientSync(cmd.Context(), conn, app.ModuleRoot); err != nil {
 							return err
 						}
-						payload, err = orientSvc.Build(cmd.Context(), orient.BuildOptions{ModuleRoot: app.ModuleRoot, MaxModules: 8, MaxDecisions: 5})
+						payload, err = buildOrient(cmd.Context(), conn, app.ModuleRoot)
 						if err != nil {
 							return err
 						}

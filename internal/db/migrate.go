@@ -18,6 +18,7 @@ var (
 	newIOFSSource          = iofs.New
 	newSQLiteWithInstance  = sqlite.WithInstance
 	newMigratorWithInstance = migrate.NewWithInstance
+	migrateUp              = func(m *migrate.Migrate) error { return m.Up() }
 )
 
 func RunMigrations(conn *sql.DB) error {
@@ -36,7 +37,7 @@ func RunMigrations(conn *sql.DB) error {
 		return fmt.Errorf("create migrator: %w", err)
 	}
 
-	if err := migrator.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+	if err := migrateUp(migrator); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil

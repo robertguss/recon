@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -136,6 +137,17 @@ func TestSyncErrors(t *testing.T) {
 	if _, err := NewService(conn3).Sync(context.Background(), root2); err == nil || !strings.Contains(err.Error(), "begin sync tx") {
 		t.Fatalf("expected begin tx error, got %v", err)
 	}
+
+	root3 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root3, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	origCollect := collectEligibleFiles
+	defer func() { collectEligibleFiles = origCollect }()
+	collectEligibleFiles = func(string) ([]SourceFile, error) { return nil, errors.New("collect fail") }
+	if _, err := NewService(conn2).Sync(context.Background(), root3); err == nil || !strings.Contains(err.Error(), "collect fail") {
+		t.Fatalf("expected collect files error, got %v", err)
+	}
 }
 
 func TestSymbolHelpers(t *testing.T) {
@@ -177,6 +189,18 @@ var V = 2
 	if receiverName(methodDecl) == "" {
 		t.Fatal("expected method receiver name")
 	}
+	identMethodSrc := `package p
+type T struct{}
+func (t T) M() {}
+`
+	fset2 := token.NewFileSet()
+	file2, err := parser.ParseFile(fset2, "y.go", identMethodSrc, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse ident receiver source: %v", err)
+	}
+	if got := receiverName(file2.Decls[1].(*ast.FuncDecl)); got != "T" {
+		t.Fatalf("expected ident receiver T, got %q", got)
+	}
 	if exprString(nil) != "" {
 		t.Fatal("exprString(nil) should be empty")
 	}
@@ -190,7 +214,51 @@ var V = 2
 	if text := textForPos(fset, []byte(src), fnDecl.Pos(), fnDecl.End()); !strings.Contains(text, "func F") {
 		t.Fatalf("expected function body text, got %q", text)
 	}
+	if got := textForPos(fset, []byte(src), token.Pos(1<<30), token.Pos(1<<30+1)); got != "" {
+		t.Fatalf("expected empty text for missing file mapping, got %q", got)
+	}
 	if boolToInt(true) != 1 || boolToInt(false) != 0 {
 		t.Fatal("boolToInt unexpected values")
+	}
+}
+
+func TestSyncImportUnquoteFallbackAndAliasLocalImportBranches(t *testing.T) {
+	root := t.TempDir()
+	mustWrite := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	mustWrite("go.mod", "module example.com/recon\n")
+	mustWrite("main.go", `package main
+import (
+  alias "example.com/recon"
+)
+func Use() { _ = alias.Use }
+`)
+
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	origUnquote := importPathUnquote
+	defer func() { importPathUnquote = origUnquote }()
+	importPathUnquote = func(string) (string, error) { return "", errors.New("unquote fail") }
+
+	if _, err := NewService(conn).Sync(context.Background(), root); err != nil {
+		t.Fatalf("Sync with unquote fallback error: %v", err)
 	}
 }

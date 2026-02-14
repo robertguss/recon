@@ -235,10 +235,12 @@ func TestRunMigrationsInjectedErrors(t *testing.T) {
 	origSource := newIOFSSource
 	origSQLite := newSQLiteWithInstance
 	origMigrator := newMigratorWithInstance
+	origMigrateUp := migrateUp
 	defer func() {
 		newIOFSSource = origSource
 		newSQLiteWithInstance = origSQLite
 		newMigratorWithInstance = origMigrator
+		migrateUp = origMigrateUp
 	}()
 
 	newIOFSSource = func(fs.FS, string) (sourcepkg.Driver, error) {
@@ -262,5 +264,16 @@ func TestRunMigrationsInjectedErrors(t *testing.T) {
 	}
 	if err := RunMigrations(conn); err == nil || !strings.Contains(err.Error(), "create migrator") {
 		t.Fatalf("expected migrator error, got %v", err)
+	}
+
+	newMigratorWithInstance = origMigrator
+	migrateUp = func(*migrate.Migrate) error { return errors.New("up fail") }
+	if err := RunMigrations(conn); err == nil || !strings.Contains(err.Error(), "apply migrations") {
+		t.Fatalf("expected migrate up error, got %v", err)
+	}
+
+	migrateUp = func(*migrate.Migrate) error { return migrate.ErrNoChange }
+	if err := RunMigrations(conn); err != nil {
+		t.Fatalf("expected ErrNoChange to be ignored, got %v", err)
 	}
 }

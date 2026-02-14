@@ -1,6 +1,7 @@
 package index
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,28 @@ func TestCollectEligibleGoFilesError(t *testing.T) {
 	}
 	if _, _, err := CurrentFingerprint(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("expected fingerprint error")
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	origRel := filepathRel
+	origRead := readFile
+	defer func() {
+		filepathRel = origRel
+		readFile = origRead
+	}()
+	filepathRel = func(string, string) (string, error) { return "", errors.New("rel fail") }
+	if _, err := CollectEligibleGoFiles(root); err == nil || !strings.Contains(err.Error(), "walk module files") {
+		t.Fatalf("expected rel error, got %v", err)
+	}
+
+	filepathRel = origRel
+	readFile = func(string) ([]byte, error) { return nil, errors.New("read fail") }
+	if _, err := CollectEligibleGoFiles(root); err == nil || !strings.Contains(err.Error(), "walk module files") {
+		t.Fatalf("expected read error, got %v", err)
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"github.com/robertguss/recon/internal/index"
 )
 
+var marshalJSON = json.Marshal
+
 type ProposeDecisionInput struct {
 	Title           string
 	Reasoning       string
@@ -71,7 +73,7 @@ func (s *Service) ProposeAndVerifyDecision(ctx context.Context, in ProposeDecisi
 		"check_type":       in.CheckType,
 		"check_spec":       in.CheckSpec,
 	}
-	entityDataJSON, err := json.Marshal(entityData)
+	entityDataJSON, err := marshalJSON(entityData)
 	if err != nil {
 		return ProposeDecisionResult{}, fmt.Errorf("marshal proposal data: %w", err)
 	}
@@ -100,11 +102,11 @@ VALUES (NULL, 'decision', ?, 'pending', ?);
 		outcome = runCheckOutcome{Passed: false, Details: err.Error(), Baseline: map[string]any{"error": err.Error()}}
 	}
 
-	baselineJSON, err := json.Marshal(outcome.Baseline)
+	baselineJSON, err := marshalJSON(outcome.Baseline)
 	if err != nil {
 		return ProposeDecisionResult{}, fmt.Errorf("marshal baseline: %w", err)
 	}
-	lastResultJSON, err := json.Marshal(map[string]any{
+	lastResultJSON, err := marshalJSON(map[string]any{
 		"passed":  outcome.Passed,
 		"details": outcome.Details,
 	})

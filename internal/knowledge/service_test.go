@@ -147,6 +147,12 @@ func TestRunCheckAndCheckImplementations(t *testing.T) {
 	if err != nil || out.Passed {
 		t.Fatalf("expected symbol_exists fail, got out=%+v err=%v", out, err)
 	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close conn: %v", err)
+	}
+	if _, err := svc.runSymbolExists(ctx, `{"name":"Hello"}`); err == nil || !strings.Contains(err.Error(), "query symbol count") {
+		t.Fatalf("expected query symbol count error on closed db, got %v", err)
+	}
 
 	if _, err := svc.runGrepPattern("{", root); err == nil {
 		t.Fatal("expected parse error for grep_pattern")
@@ -160,6 +166,13 @@ func TestRunCheckAndCheckImplementations(t *testing.T) {
 	out, err = svc.runGrepPattern(`{"pattern":"package","scope":"*.go"}`, root)
 	if err != nil || !out.Passed {
 		t.Fatalf("expected grep pattern pass, got out=%+v err=%v", out, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "extra.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	out, err = svc.runGrepPattern(`{"pattern":"package","scope":"main.go"}`, root)
+	if err != nil || !out.Passed {
+		t.Fatalf("expected scoped grep with skipped files to pass, got out=%+v err=%v", out, err)
 	}
 	out, err = svc.runGrepPattern(`{"pattern":"no-match","scope":"main.go"}`, root)
 	if err != nil || out.Passed {

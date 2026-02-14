@@ -1,7 +1,9 @@
 package index
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,11 +71,24 @@ func TestModulePathErrors(t *testing.T) {
 		t.Fatalf("expected module missing error, got %v", err)
 	}
 
-	long := strings.Repeat("a", 70_000)
+	long := strings.Repeat("a", 2_000_000)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(long), 0o644); err != nil {
 		t.Fatalf("write long go.mod: %v", err)
 	}
 	if _, err := ModulePath(root); err == nil || !strings.Contains(err.Error(), "read go.mod") {
 		t.Fatalf("expected scanner error, got %v", err)
 	}
+
+	origScanner := moduleScanner
+	defer func() { moduleScanner = origScanner }()
+	moduleScanner = func(io.Reader) *bufio.Scanner {
+		return bufio.NewScanner(io.Reader(errorReader{}))
+	}
+	if _, err := ModulePath(root); err == nil || !strings.Contains(err.Error(), "read go.mod") {
+		t.Fatalf("expected injected scanner error, got %v", err)
+	}
 }
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("boom") }

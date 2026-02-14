@@ -10,6 +10,7 @@ import (
 )
 
 var moduleAbsPath = filepath.Abs
+var moduleScanner = bufio.NewScanner
 
 func FindModuleRoot(start string) (string, error) {
 	current, err := moduleAbsPath(start)
@@ -38,14 +39,11 @@ func ModulePath(moduleRoot string) (string, error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	scanner := moduleScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "module "))
-			if path == "" {
-				break
-			}
 			return path, nil
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var runMigrations = db.RunMigrations
+
 func newInitCommand(app *App) *cobra.Command {
 	var jsonOut bool
 
@@ -25,7 +27,7 @@ func newInitCommand(app *App) *cobra.Command {
 			}
 			defer conn.Close()
 
-			if err := db.RunMigrations(conn); err != nil {
+			if err := runMigrations(conn); err != nil {
 				return err
 			}
 			if err := db.EnsureGitIgnore(app.ModuleRoot); err != nil {
