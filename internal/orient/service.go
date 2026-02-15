@@ -365,7 +365,7 @@ func formatDependencyFlow(deps map[string][]string) string {
 }
 
 func (s *Service) loadModuleHeat(ctx context.Context, moduleRoot string, payload *Payload) {
-	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=2 weeks ago", "--name-only", "--pretty=format:")
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=30 days ago", "--name-only", "--pretty=format:")
 	out, err := cmd.Output()
 	if err != nil {
 		return // Non-fatal: heat is optional
