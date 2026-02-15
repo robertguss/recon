@@ -6,13 +6,17 @@ code in this repository.
 ## What is Recon
 
 Recon is a code intelligence and knowledge CLI for Go repositories. It indexes
-Go source code into a local SQLite database (`.recon/recon.db`), then provides
-commands to query symbols, record architectural decisions with evidence
-verification, and serve startup context for AI coding agents.
+Go source code (packages, files, symbols, imports, dependencies) into a local
+SQLite database (`.recon/recon.db`) and provides commands for navigating,
+searching, recording decisions with evidence, detecting patterns, and orienting
+within a codebase.
 
 ## Build & Development Commands
 
-```bash
+This project uses [just](https://github.com/casey/just) as a command runner. All
+recipes are in `justfile`.
+
+```sh
 just build          # Build binary to ./bin/recon
 just install        # Install to GOPATH/bin
 just run <args>     # Run via go run, forwarding args
@@ -20,71 +24,97 @@ just test           # Run full test suite (go test ./...)
 just test-race      # Run tests with race detector
 just cover          # Generate coverage.out and print summary
 just fmt            # Format all Go packages
-just db-reset       # Delete local SQLite database
 ```
 
-Run a single test:
+Run a single package's tests:
 
-```bash
-go test ./internal/find -run TestFindExact -v
+```sh
+go test ./internal/knowledge/...
+```
+
+Run a single test by name:
+
+```sh
+go test ./internal/orient/... -run TestOrientService
+```
+
+Workflow commands (run recon itself):
+
+```sh
+just init           # Initialize .recon/ directory and schema
+just sync           # Index current repository state
+just orient         # Show status + suggested next actions
+just find <args>    # Search indexed symbols/files/imports
+just decide <args>  # Record a decision with evidence
+just recall <args>  # Recall previously recorded decisions
+just db-reset       # Delete .recon/recon.db
 ```
 
 ## Architecture
 
-### CLI Layer (`cmd/recon/`, `internal/cli/`)
+### Entry Point & CLI Layer
 
-Cobra-based CLI. `cmd/recon/main.go` calls `cli.NewRootCommand()` which
-registers all subcommands. Each command file in `internal/cli/` wires flags,
-opens the DB via `openExistingDB()`, instantiates the appropriate service, and
-formats output (text or `--json`).
+- `cmd/recon/main.go` — entry point, delegates to `internal/cli.NewRootCommand`
+- `internal/cli/` — all Cobra command definitions and CLI wiring
+  - `root.go` — builds the root command, registers subcommands (init, sync,
+    orient, find, decide, pattern, recall, status)
+  - `store.go` — helper to open existing DB, returns a typed error if DB not
+    initialized
+  - `output.go` — shared output formatting (JSON/text modes)
+  - `exit_error.go` — typed `ExitError` for controlled exit codes
+  - `json_errors.go` — structured JSON error classification
 
-Commands: `init`, `sync`, `orient`, `find`, `decide`, `recall`.
+### Domain Services (internal/)
 
-### Service Layer (`internal/`)
+Each domain has its own package under `internal/` with a `Service` struct
+wrapping `*sql.DB`:
 
-Each domain has its own package with a `Service` struct created via
-`NewService(conn)`:
+| Package              | Purpose                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `internal/knowledge` | Decision recording: propose, verify, promote, update, archive decisions with evidence |
+| `internal/find`      | Symbol/file/import search across the indexed codebase                                 |
+| `internal/recall`    | Query and retrieve previously recorded decisions (FTS-backed)                         |
+| `internal/orient`    | Status aggregation and next-action suggestions                                        |
+| `internal/pattern`   | Detect and record recurring code patterns                                             |
+| `internal/index`     | Repository indexing: parse Go files, extract symbols/imports/deps, upsert into DB     |
 
-- **`internal/index`** — Parses Go source with `go/ast`, extracts symbols
-  (funcs, methods, types, vars, consts) with bodies and dependency edges, writes
-  to SQLite. `Sync()` is the main entry point.
-- **`internal/find`** — Queries indexed symbols by name with optional filters
-  (package, file, kind). Returns symbol details and direct in-project
-  dependencies.
-- **`internal/orient`** — Builds a startup context payload (freshness, modules,
-  recent decisions) for AI agents. Handles stale-index detection and optional
-  auto-sync.
-- **`internal/knowledge`** — `ProposeAndVerifyDecision()` records decisions with
-  evidence checks (`file_exists`, `symbol_exists`, `grep_pattern`).
-  Auto-promotes when verification passes.
-- **`internal/recall`** — Searches promoted decisions by keyword.
+### Database Layer
 
-### Database Layer (`internal/db/`)
+- `internal/db/db.go` — SQLite connection management (modernc.org/sqlite,
+  pure-Go driver), `.recon/` directory management
+- `internal/db/migrate.go` — schema migrations using golang-migrate
+- `internal/db/migrations/` — numbered SQL migration files (up/down)
+- Database lives at `<module-root>/.recon/recon.db`
 
-SQLite via `modernc.org/sqlite` (pure Go, no CGO). Migrations use
-`golang-migrate` with embedded SQL files in `internal/db/migrations/`.
-`db.Open()` enforces `MaxOpenConns(1)` and enables foreign keys.
+Key tables: `packages`, `files`, `symbols`, `imports`, `symbol_deps`,
+`decisions`, `evidence`, `proposals`, `sessions`, `sync_state`, `search_index`
+(FTS5)
 
-### Testability Pattern
+### Testing Patterns
 
-Services and OS calls are injected via package-level `var` functions (e.g.,
-`var runSync = ...`, `var osGetwd = os.Getwd`). Tests override these to inject
-mocks or sqlmock instances. Both sqlmock-based unit tests and integration tests
-using real SQLite exist side-by-side.
+- Tests use both real SQLite databases (temp directories) and `go-sqlmock` for
+  error path testing
+- Files named `*_sqlmock_test.go` test SQL error handling via mocked DB
+  connections
+- Files named `*_extra_test.go` and `*_coverage_test.go` fill coverage gaps
+- The CLI layer is tested via Cobra command execution (`cmd.Execute()`) with
+  captured stdout/stderr
+- Test helpers inject function vars (e.g., `osGetwd`, `findModuleRoot`,
+  `sqlOpen`) for isolation
 
 ## ExecPlans
 
-Feature work follows the ExecPlan process defined in `.agent/PLANS.md`. Plans
-are living documents stored in `docs/plans/` with required sections: Progress,
-Surprises & Discoveries, Decision Log, and Outcomes & Retrospective. Plans must
-be fully self-contained and follow strict TDD.
+When writing complex features or significant refactors, use an ExecPlan as
+described in `.agent/PLANS.md`. ExecPlans are self-contained living documents
+that follow strict TDD and require 100% test coverage.
 
 ## Conventions
 
-- All commands support `--json` for machine-readable output with structured
-  error codes (`not_found`, `ambiguous`, `invalid_input`, `internal_error`).
-- `ExitError{Code, Message}` is the standard way to signal non-zero exit codes
-  from command handlers.
-- Module root is auto-detected by walking up to find `go.mod`; falls back to
-  cwd.
-- The `.recon/` directory and its database are local per-repo, gitignored.
+- Conventional Commits for commit messages (e.g.,
+  `fix(decide): classify update JSON errors`)
+- Prefer `internal/` packages — nothing is exported outside the module
+- Each service owns its SQL queries directly (no ORM, no shared query builder)
+- Function-var injection pattern for testability (override package-level `var`
+  in tests)
+- `--no-prompt` flag disables interactive prompts globally
+- Output supports both text and JSON modes via `internal/cli/output.go`
