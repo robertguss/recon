@@ -158,3 +158,54 @@ func TestSuggestionsAndDirectDepsScanAndRowsErrors(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+func TestListPackagesQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT path, name, file_count, line_count FROM packages").
+		WillReturnError(errors.New("query fail"))
+
+	_, err = NewService(db).ListPackages(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "query packages") {
+		t.Fatalf("expected query error, got %v", err)
+	}
+}
+
+func TestListPackagesScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT path, name, file_count, line_count FROM packages").
+		WillReturnRows(sqlmock.NewRows([]string{"path", "name", "file_count", "line_count"}).
+			AddRow("p", "n", "bad-int", 1))
+
+	_, err = NewService(db).ListPackages(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "scan package") {
+		t.Fatalf("expected scan error, got %v", err)
+	}
+}
+
+func TestListPackagesRowsError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT path, name, file_count, line_count FROM packages").
+		WillReturnRows(sqlmock.NewRows([]string{"path", "name", "file_count", "line_count"}).
+			AddRow("p", "n", 1, 1).
+			RowError(0, errors.New("row iter fail")))
+
+	_, err = NewService(db).ListPackages(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "iterate packages") {
+		t.Fatalf("expected iterate error, got %v", err)
+	}
+}
