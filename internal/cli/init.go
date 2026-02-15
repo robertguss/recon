@@ -7,13 +7,23 @@ import (
 	"path/filepath"
 
 	"github.com/robertguss/recon/internal/db"
+	"github.com/robertguss/recon/internal/install"
 	"github.com/spf13/cobra"
 )
 
-var runMigrations = db.RunMigrations
+var (
+	runMigrations        = db.RunMigrations
+	installHook          = install.InstallHook
+	installSkill         = install.InstallSkill
+	installSettings      = install.InstallSettings
+	installClaudeSection = install.InstallClaudeSection
+)
 
 func newInitCommand(app *App) *cobra.Command {
-	var jsonOut bool
+	var (
+		jsonOut bool
+		force   bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -25,6 +35,24 @@ func newInitCommand(app *App) *cobra.Command {
 					return fmt.Errorf("go.mod not found at %s; run `recon` from a Go module", app.ModuleRoot)
 				}
 				return fmt.Errorf("stat go.mod: %w", err)
+			}
+
+			// Check if already initialized.
+			reconDir := filepath.Join(app.ModuleRoot, ".recon")
+			if _, err := os.Stat(reconDir); err == nil {
+				if !force {
+					if app.NoPrompt {
+						return fmt.Errorf("recon already initialized; use --force to reinstall")
+					}
+					yes, err := askYesNo("recon is already initialized. Reinstall? [y/N]: ", false)
+					if err != nil {
+						return fmt.Errorf("read reinstall prompt: %w", err)
+					}
+					if !yes {
+						fmt.Println("Cancelled.")
+						return nil
+					}
+				}
 			}
 
 			if _, err := db.EnsureReconDir(app.ModuleRoot); err != nil {
@@ -45,19 +73,35 @@ func newInitCommand(app *App) *cobra.Command {
 				return err
 			}
 
+			// Install Claude Code integration files.
+			if err := installHook(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install hook: %w", err)
+			}
+			if err := installSkill(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install skill: %w", err)
+			}
+			if err := installSettings(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install settings: %w", err)
+			}
+			if err := installClaudeSection(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install claude section: %w", err)
+			}
+
 			if jsonOut {
 				return writeJSON(map[string]any{
 					"ok":          true,
 					"module_root": app.ModuleRoot,
 					"db_path":     path,
+					"claude_code": true,
 				})
 			}
 
-			fmt.Printf("Initialized recon at %s\n", path)
+			fmt.Printf("Initialized recon at %s\nClaude Code integration installed (.claude/hooks, skills, settings)\n", path)
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
+	cmd.Flags().BoolVar(&force, "force", false, "Force reinstall without prompting")
 	return cmd
 }

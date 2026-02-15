@@ -118,7 +118,7 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 	if err != nil || !strings.Contains(out, "\"ok\": true") {
 		t.Fatalf("init --json failed out=%q err=%v", out, err)
 	}
-	out, _, err = runCommandWithCapture(t, newInitCommand(app), nil)
+	out, _, err = runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
 	if err != nil || !strings.Contains(out, "Initialized recon") {
 		t.Fatalf("init text failed out=%q err=%v", out, err)
 	}
@@ -231,10 +231,30 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 	_ = fmt.Sprintf("%v", app.Context)
 }
 
+func saveAndMockInstallFuncs(t *testing.T) {
+	t.Helper()
+	origHook := installHook
+	origSkill := installSkill
+	origSettings := installSettings
+	origClaude := installClaudeSection
+	t.Cleanup(func() {
+		installHook = origHook
+		installSkill = origSkill
+		installSettings = origSettings
+		installClaudeSection = origClaude
+	})
+	noop := func(string) error { return nil }
+	installHook = noop
+	installSkill = noop
+	installSettings = noop
+	installClaudeSection = noop
+}
+
 func TestInitCommandErrorBranches(t *testing.T) {
 	root := setupModuleRoot(t)
 	origRunMigrations := runMigrations
 	defer func() { runMigrations = origRunMigrations }()
+	saveAndMockInstallFuncs(t)
 
 	// Missing go.mod error.
 	noModRoot := t.TempDir()
@@ -282,6 +302,60 @@ func TestInitCommandErrorBranches(t *testing.T) {
 	runMigrations = func(*sql.DB) error { return errors.New("migrate fail") }
 	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: root3}), nil); err == nil {
 		t.Fatal("expected RunMigrations error")
+	}
+}
+
+func TestInitInstallErrorPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		failFunc string
+		errMsg   string
+	}{
+		{"hook error", "hook", "install hook"},
+		{"skill error", "skill", "install skill"},
+		{"settings error", "settings", "install settings"},
+		{"claude section error", "claude", "install claude section"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := setupModuleRoot(t)
+			app := &App{Context: context.Background(), ModuleRoot: root}
+
+			origHook := installHook
+			origSkill := installSkill
+			origSettings := installSettings
+			origClaude := installClaudeSection
+			defer func() {
+				installHook = origHook
+				installSkill = origSkill
+				installSettings = origSettings
+				installClaudeSection = origClaude
+			}()
+
+			noop := func(string) error { return nil }
+			installHook = noop
+			installSkill = noop
+			installSettings = noop
+			installClaudeSection = noop
+
+			fail := func(string) error { return errors.New("permission denied") }
+			switch tt.failFunc {
+			case "hook":
+				installHook = fail
+			case "skill":
+				installSkill = fail
+			case "settings":
+				installSettings = fail
+			case "claude":
+				installClaudeSection = fail
+			}
+
+			_, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+			if err == nil || !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected %q error, got %v", tt.errMsg, err)
+			}
+		})
 	}
 }
 
@@ -1130,6 +1204,137 @@ func TestMissingArgsStructuredErrors(t *testing.T) {
 	}
 }
 
+func TestInitReinstall(t *testing.T) {
+	t.Run("prompts when .recon exists and user says no", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init to create .recon/
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		isInteractive = func() bool { return true }
+		askYesNo = func(prompt string, _ bool) (bool, error) {
+			if !strings.Contains(prompt, "already initialized") {
+				t.Fatalf("unexpected prompt: %q", prompt)
+			}
+			return false, nil
+		}
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+		if err != nil {
+			t.Fatalf("reinstall declined should not error: %v", err)
+		}
+		if !strings.Contains(out, "Cancelled") {
+			t.Fatalf("expected Cancelled output, got %q", out)
+		}
+	})
+
+	t.Run("prompts when .recon exists and user says yes", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		isInteractive = func() bool { return true }
+		askYesNo = func(_ string, _ bool) (bool, error) { return true, nil }
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+		if err != nil {
+			t.Fatalf("reinstall accepted: %v", err)
+		}
+		if !strings.Contains(out, "Initialized recon") {
+			t.Fatalf("expected success output, got %q", out)
+		}
+	})
+
+	t.Run("--force bypasses prompt", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		prompted := false
+		isInteractive = func() bool { return true }
+		askYesNo = func(_ string, _ bool) (bool, error) {
+			prompted = true
+			return false, nil
+		}
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
+		if err != nil {
+			t.Fatalf("init --force: %v", err)
+		}
+		if prompted {
+			t.Fatal("--force should bypass prompt")
+		}
+		if !strings.Contains(out, "Initialized recon") {
+			t.Fatalf("expected success output, got %q", out)
+		}
+	})
+
+	t.Run("--no-prompt without --force errors when .recon exists", func(t *testing.T) {
+		root := setupModuleRoot(t)
+
+		origGetwd := osGetwd
+		origFind := findModuleRoot
+		defer func() {
+			osGetwd = origGetwd
+			findModuleRoot = origFind
+		}()
+
+		osGetwd = func() (string, error) { return root, nil }
+		findModuleRoot = func(string) (string, error) { return root, nil }
+
+		rootCmd, err := NewRootCommand(context.Background())
+		if err != nil {
+			t.Fatalf("new root: %v", err)
+		}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, rootCmd, []string{"init"}); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		rootCmd2, err := NewRootCommand(context.Background())
+		if err != nil {
+			t.Fatalf("new root: %v", err)
+		}
+		_, _, err = runCommandWithCapture(t, rootCmd2, []string{"--no-prompt", "init"})
+		if err == nil || !strings.Contains(err.Error(), "already initialized") {
+			t.Fatalf("expected already initialized error, got %v", err)
+		}
+	})
+}
+
 func TestDecideInvalidCheckTypeError(t *testing.T) {
 	root := setupModuleRoot(t)
 	app := &App{Context: context.Background(), ModuleRoot: root}
@@ -1146,5 +1351,62 @@ func TestDecideInvalidCheckTypeError(t *testing.T) {
 	}
 	if !strings.Contains(out, "must be one of") {
 		t.Fatalf("expected error listing valid check types, out=%q", out)
+	}
+}
+
+func TestInitInstallsClaudeCodeFiles(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	out, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("init --json: %v", err)
+	}
+	if !strings.Contains(out, `"claude_code": true`) {
+		t.Fatalf("expected claude_code in JSON, out=%q", out)
+	}
+
+	// Hook exists and is executable.
+	hookPath := filepath.Join(root, ".claude", "hooks", "recon-orient.sh")
+	info, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatalf("stat hook: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("hook not executable: %o", info.Mode().Perm())
+	}
+
+	// Skill exists.
+	skillPath := filepath.Join(root, ".claude", "skills", "recon", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("stat skill: %v", err)
+	}
+
+	// Settings exists with hook config.
+	settingsPath := filepath.Join(root, ".claude", "settings.json")
+	settingsData, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if !strings.Contains(string(settingsData), "SessionStart") {
+		t.Fatalf("settings missing SessionStart: %s", settingsData)
+	}
+
+	// CLAUDE.md has Recon section.
+	claudeData, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if !strings.Contains(string(claudeData), "## Recon (Code Intelligence)") {
+		t.Fatalf("CLAUDE.md missing Recon section: %s", claudeData)
+	}
+
+	// Text mode output mentions Claude Code.
+	out, _, err = runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("init text: %v", err)
+	}
+	if !strings.Contains(out, "Claude Code integration installed") {
+		t.Fatalf("expected Claude Code mention in text, out=%q", out)
 	}
 }
