@@ -11,7 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runMigrations = db.RunMigrations
+var (
+	runMigrations        = db.RunMigrations
+	installHook          = install.InstallHook
+	installSkill         = install.InstallSkill
+	installSettings      = install.InstallSettings
+	installClaudeSection = install.InstallClaudeSection
+)
 
 func newInitCommand(app *App) *cobra.Command {
 	var (
@@ -68,16 +74,16 @@ func newInitCommand(app *App) *cobra.Command {
 			}
 
 			// Install Claude Code integration files.
-			if err := install.InstallHook(app.ModuleRoot); err != nil {
+			if err := installHook(app.ModuleRoot); err != nil {
 				return fmt.Errorf("install hook: %w", err)
 			}
-			if err := install.InstallSkill(app.ModuleRoot); err != nil {
+			if err := installSkill(app.ModuleRoot); err != nil {
 				return fmt.Errorf("install skill: %w", err)
 			}
-			if err := install.InstallSettings(app.ModuleRoot); err != nil {
+			if err := installSettings(app.ModuleRoot); err != nil {
 				return fmt.Errorf("install settings: %w", err)
 			}
-			if err := install.InstallClaudeSection(app.ModuleRoot); err != nil {
+			if err := installClaudeSection(app.ModuleRoot); err != nil {
 				return fmt.Errorf("install claude section: %w", err)
 			}
 

@@ -231,10 +231,30 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 	_ = fmt.Sprintf("%v", app.Context)
 }
 
+func saveAndMockInstallFuncs(t *testing.T) {
+	t.Helper()
+	origHook := installHook
+	origSkill := installSkill
+	origSettings := installSettings
+	origClaude := installClaudeSection
+	t.Cleanup(func() {
+		installHook = origHook
+		installSkill = origSkill
+		installSettings = origSettings
+		installClaudeSection = origClaude
+	})
+	noop := func(string) error { return nil }
+	installHook = noop
+	installSkill = noop
+	installSettings = noop
+	installClaudeSection = noop
+}
+
 func TestInitCommandErrorBranches(t *testing.T) {
 	root := setupModuleRoot(t)
 	origRunMigrations := runMigrations
 	defer func() { runMigrations = origRunMigrations }()
+	saveAndMockInstallFuncs(t)
 
 	// Missing go.mod error.
 	noModRoot := t.TempDir()
@@ -282,6 +302,60 @@ func TestInitCommandErrorBranches(t *testing.T) {
 	runMigrations = func(*sql.DB) error { return errors.New("migrate fail") }
 	if _, _, err := runCommandWithCapture(t, newInitCommand(&App{Context: context.Background(), ModuleRoot: root3}), nil); err == nil {
 		t.Fatal("expected RunMigrations error")
+	}
+}
+
+func TestInitInstallErrorPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		failFunc string
+		errMsg   string
+	}{
+		{"hook error", "hook", "install hook"},
+		{"skill error", "skill", "install skill"},
+		{"settings error", "settings", "install settings"},
+		{"claude section error", "claude", "install claude section"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := setupModuleRoot(t)
+			app := &App{Context: context.Background(), ModuleRoot: root}
+
+			origHook := installHook
+			origSkill := installSkill
+			origSettings := installSettings
+			origClaude := installClaudeSection
+			defer func() {
+				installHook = origHook
+				installSkill = origSkill
+				installSettings = origSettings
+				installClaudeSection = origClaude
+			}()
+
+			noop := func(string) error { return nil }
+			installHook = noop
+			installSkill = noop
+			installSettings = noop
+			installClaudeSection = noop
+
+			fail := func(string) error { return errors.New("permission denied") }
+			switch tt.failFunc {
+			case "hook":
+				installHook = fail
+			case "skill":
+				installSkill = fail
+			case "settings":
+				installSettings = fail
+			case "claude":
+				installClaudeSection = fail
+			}
+
+			_, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+			if err == nil || !strings.Contains(err.Error(), tt.errMsg) {
+				t.Fatalf("expected %q error, got %v", tt.errMsg, err)
+			}
+		})
 	}
 }
 
