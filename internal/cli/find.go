@@ -18,6 +18,7 @@ func newFindCommand(app *App) *cobra.Command {
 		fileFilter    string
 		kindFilter    string
 		limit         int
+		listPackages  bool
 	)
 
 	cmd := &cobra.Command{
@@ -25,6 +26,36 @@ func newFindCommand(app *App) *cobra.Command {
 		Short: "Find exact symbol or list symbols by filter",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if listPackages {
+				conn, connErr := openExistingDB(app)
+				if connErr != nil {
+					if jsonOut {
+						return exitJSONCommandError(connErr)
+					}
+					return connErr
+				}
+				defer conn.Close()
+
+				pkgs, err := find.NewService(conn).ListPackages(cmd.Context())
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+
+				if jsonOut {
+					return writeJSON(pkgs)
+				}
+
+				fmt.Printf("Packages (%d):\n", len(pkgs))
+				for _, p := range pkgs {
+					fmt.Printf("- %s  %d files  %d lines\n", p.Path, p.FileCount, p.LineCount)
+				}
+				return nil
+			}
+
 			normalizedKind, err := normalizeFindKind(kindFilter)
 			if err != nil {
 				if jsonOut {
@@ -163,6 +194,7 @@ func newFindCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&fileFilter, "file", "", "Filter by file path when symbols are ambiguous")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter by symbol kind (func, method, type, var, const)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum symbols in list mode")
+	cmd.Flags().BoolVar(&listPackages, "list-packages", false, "List all indexed packages")
 	return cmd
 }
 

@@ -79,6 +79,35 @@ type ListResult struct {
 	Limit   int      `json:"limit"`
 }
 
+type PackageSummary struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	FileCount int    `json:"file_count"`
+	LineCount int    `json:"line_count"`
+}
+
+func (s *Service) ListPackages(ctx context.Context) ([]PackageSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path, name, file_count, line_count FROM packages ORDER BY line_count DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query packages: %w", err)
+	}
+	defer rows.Close()
+
+	var pkgs []PackageSummary
+	for rows.Next() {
+		var p PackageSummary
+		if err := rows.Scan(&p.Path, &p.Name, &p.FileCount, &p.LineCount); err != nil {
+			return nil, fmt.Errorf("scan package: %w", err)
+		}
+		pkgs = append(pkgs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate packages: %w", err)
+	}
+	return pkgs, nil
+}
+
 func (s *Service) List(ctx context.Context, opts QueryOptions, limit int) (ListResult, error) {
 	opts = normalizeQueryOptions(opts)
 	if !hasActiveFilters(opts) {

@@ -392,6 +392,29 @@ func TestListWithShortPackageName(t *testing.T) {
 	}
 }
 
+func TestListPackages(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a second package
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'internal/index','index','example.com/recon/internal/index',3,150,'x','x');`)
+
+	pkgs, err := NewService(conn).ListPackages(context.Background())
+	if err != nil {
+		t.Fatalf("ListPackages error: %v", err)
+	}
+	if len(pkgs) != 2 {
+		t.Fatalf("expected 2 packages, got %d", len(pkgs))
+	}
+	// Should be ordered by line_count DESC
+	if pkgs[0].Path != "internal/index" {
+		t.Fatalf("expected largest package first, got %s", pkgs[0].Path)
+	}
+	if pkgs[0].FileCount != 3 || pkgs[0].LineCount != 150 {
+		t.Fatalf("unexpected counts: %+v", pkgs[0])
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {
