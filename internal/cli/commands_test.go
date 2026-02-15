@@ -118,7 +118,7 @@ func TestCommandsEndToEndAndBranches(t *testing.T) {
 	if err != nil || !strings.Contains(out, "\"ok\": true") {
 		t.Fatalf("init --json failed out=%q err=%v", out, err)
 	}
-	out, _, err = runCommandWithCapture(t, newInitCommand(app), nil)
+	out, _, err = runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
 	if err != nil || !strings.Contains(out, "Initialized recon") {
 		t.Fatalf("init text failed out=%q err=%v", out, err)
 	}
@@ -1128,6 +1128,137 @@ func TestMissingArgsStructuredErrors(t *testing.T) {
 	if !strings.Contains(out, `"code": "missing_argument"`) {
 		t.Fatalf("expected missing_argument envelope for decide, out=%q", out)
 	}
+}
+
+func TestInitReinstall(t *testing.T) {
+	t.Run("prompts when .recon exists and user says no", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init to create .recon/
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		isInteractive = func() bool { return true }
+		askYesNo = func(prompt string, _ bool) (bool, error) {
+			if !strings.Contains(prompt, "already initialized") {
+				t.Fatalf("unexpected prompt: %q", prompt)
+			}
+			return false, nil
+		}
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+		if err != nil {
+			t.Fatalf("reinstall declined should not error: %v", err)
+		}
+		if !strings.Contains(out, "Cancelled") {
+			t.Fatalf("expected Cancelled output, got %q", out)
+		}
+	})
+
+	t.Run("prompts when .recon exists and user says yes", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		isInteractive = func() bool { return true }
+		askYesNo = func(_ string, _ bool) (bool, error) { return true, nil }
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), nil)
+		if err != nil {
+			t.Fatalf("reinstall accepted: %v", err)
+		}
+		if !strings.Contains(out, "Initialized recon") {
+			t.Fatalf("expected success output, got %q", out)
+		}
+	})
+
+	t.Run("--force bypasses prompt", func(t *testing.T) {
+		root := setupModuleRoot(t)
+		app := &App{Context: context.Background(), ModuleRoot: root}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		origInteractive := isInteractive
+		origAsk := askYesNo
+		defer func() {
+			isInteractive = origInteractive
+			askYesNo = origAsk
+		}()
+
+		prompted := false
+		isInteractive = func() bool { return true }
+		askYesNo = func(_ string, _ bool) (bool, error) {
+			prompted = true
+			return false, nil
+		}
+
+		out, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
+		if err != nil {
+			t.Fatalf("init --force: %v", err)
+		}
+		if prompted {
+			t.Fatal("--force should bypass prompt")
+		}
+		if !strings.Contains(out, "Initialized recon") {
+			t.Fatalf("expected success output, got %q", out)
+		}
+	})
+
+	t.Run("--no-prompt without --force errors when .recon exists", func(t *testing.T) {
+		root := setupModuleRoot(t)
+
+		origGetwd := osGetwd
+		origFind := findModuleRoot
+		defer func() {
+			osGetwd = origGetwd
+			findModuleRoot = origFind
+		}()
+
+		osGetwd = func() (string, error) { return root, nil }
+		findModuleRoot = func(string) (string, error) { return root, nil }
+
+		rootCmd, err := NewRootCommand(context.Background())
+		if err != nil {
+			t.Fatalf("new root: %v", err)
+		}
+
+		// First init.
+		if _, _, err := runCommandWithCapture(t, rootCmd, []string{"init"}); err != nil {
+			t.Fatalf("first init: %v", err)
+		}
+
+		rootCmd2, err := NewRootCommand(context.Background())
+		if err != nil {
+			t.Fatalf("new root: %v", err)
+		}
+		_, _, err = runCommandWithCapture(t, rootCmd2, []string{"--no-prompt", "init"})
+		if err == nil || !strings.Contains(err.Error(), "already initialized") {
+			t.Fatalf("expected already initialized error, got %v", err)
+		}
+	})
 }
 
 func TestDecideInvalidCheckTypeError(t *testing.T) {
