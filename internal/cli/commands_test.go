@@ -1279,3 +1279,60 @@ func TestDecideInvalidCheckTypeError(t *testing.T) {
 		t.Fatalf("expected error listing valid check types, out=%q", out)
 	}
 }
+
+func TestInitInstallsClaudeCodeFiles(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+
+	out, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--json"})
+	if err != nil {
+		t.Fatalf("init --json: %v", err)
+	}
+	if !strings.Contains(out, `"claude_code": true`) {
+		t.Fatalf("expected claude_code in JSON, out=%q", out)
+	}
+
+	// Hook exists and is executable.
+	hookPath := filepath.Join(root, ".claude", "hooks", "recon-orient.sh")
+	info, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatalf("stat hook: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("hook not executable: %o", info.Mode().Perm())
+	}
+
+	// Skill exists.
+	skillPath := filepath.Join(root, ".claude", "skills", "recon", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("stat skill: %v", err)
+	}
+
+	// Settings exists with hook config.
+	settingsPath := filepath.Join(root, ".claude", "settings.json")
+	settingsData, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if !strings.Contains(string(settingsData), "SessionStart") {
+		t.Fatalf("settings missing SessionStart: %s", settingsData)
+	}
+
+	// CLAUDE.md has Recon section.
+	claudeData, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if !strings.Contains(string(claudeData), "## Recon (Code Intelligence)") {
+		t.Fatalf("CLAUDE.md missing Recon section: %s", claudeData)
+	}
+
+	// Text mode output mentions Claude Code.
+	out, _, err = runCommandWithCapture(t, newInitCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("init text: %v", err)
+	}
+	if !strings.Contains(out, "Claude Code integration installed") {
+		t.Fatalf("expected Claude Code mention in text, out=%q", out)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/robertguss/recon/internal/db"
+	"github.com/robertguss/recon/internal/install"
 	"github.com/spf13/cobra"
 )
 
@@ -66,15 +67,30 @@ func newInitCommand(app *App) *cobra.Command {
 				return err
 			}
 
+			// Install Claude Code integration files.
+			if err := install.InstallHook(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install hook: %w", err)
+			}
+			if err := install.InstallSkill(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install skill: %w", err)
+			}
+			if err := install.InstallSettings(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install settings: %w", err)
+			}
+			if err := install.InstallClaudeSection(app.ModuleRoot); err != nil {
+				return fmt.Errorf("install claude section: %w", err)
+			}
+
 			if jsonOut {
 				return writeJSON(map[string]any{
 					"ok":          true,
 					"module_root": app.ModuleRoot,
 					"db_path":     path,
+					"claude_code": true,
 				})
 			}
 
-			fmt.Printf("Initialized recon at %s\n", path)
+			fmt.Printf("Initialized recon at %s\nClaude Code integration installed (.claude/hooks, skills, settings)\n", path)
 			return nil
 		},
 	}
