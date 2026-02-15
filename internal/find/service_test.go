@@ -392,6 +392,29 @@ func TestListWithShortPackageName(t *testing.T) {
 	}
 }
 
+func TestMatchPackagePathEdgeCases(t *testing.T) {
+	// Exact match
+	if !matchPackagePath("internal/index", "internal/index") {
+		t.Fatal("expected exact match")
+	}
+	// Short name match
+	if !matchPackagePath("internal/index", "index") {
+		t.Fatal("expected short name match")
+	}
+	// Short name no match
+	if matchPackagePath("internal/index", "other") {
+		t.Fatal("expected no match for different short name")
+	}
+	// Filter with slash that doesn't match
+	if matchPackagePath("internal/index", "pkg/index") {
+		t.Fatal("expected no match for different full path")
+	}
+	// Single-segment package with short name
+	if !matchPackagePath("index", "index") {
+		t.Fatal("expected match for single-segment package")
+	}
+}
+
 func TestListPackages(t *testing.T) {
 	conn, cleanup := findTestDB(t)
 	defer cleanup()
