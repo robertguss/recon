@@ -12,8 +12,16 @@ import (
 //go:embed assets/*
 var assetsFS embed.FS
 
+// readAsset is a package-level var for testability.
+var readAsset = func(name string) ([]byte, error) {
+	return assetsFS.ReadFile(name)
+}
+
+// marshalJSON is a package-level var for testability.
+var marshalJSON = json.MarshalIndent
+
 func InstallHook(root string) error {
-	data, err := assetsFS.ReadFile("assets/hook.sh")
+	data, err := readAsset("assets/hook.sh")
 	if err != nil {
 		return fmt.Errorf("read embedded hook: %w", err)
 	}
@@ -31,7 +39,7 @@ func InstallHook(root string) error {
 }
 
 func InstallSkill(root string) error {
-	data, err := assetsFS.ReadFile("assets/SKILL.md")
+	data, err := readAsset("assets/SKILL.md")
 	if err != nil {
 		return fmt.Errorf("read embedded skill: %w", err)
 	}
@@ -49,7 +57,7 @@ func InstallSkill(root string) error {
 }
 
 func InstallClaudeSection(root string) error {
-	section, err := assetsFS.ReadFile("assets/CLAUDE_SECTION.md")
+	section, err := readAsset("assets/CLAUDE_SECTION.md")
 	if err != nil {
 		return fmt.Errorf("read embedded claude section: %w", err)
 	}
@@ -131,7 +139,7 @@ func InstallSettings(root string) error {
 	hooks["SessionStart"] = []any{sessionStartEntry}
 	settings["hooks"] = hooks
 
-	data, err := json.MarshalIndent(settings, "", "  ")
+	data, err := marshalJSON(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
