@@ -22,7 +22,7 @@ func TestRenderText(t *testing.T) {
 	}
 }
 
-func TestRenderTextColdModulesHidden(t *testing.T) {
+func TestRenderTextColdModulesAnnotated(t *testing.T) {
 	payload := Payload{
 		Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"},
 		Modules: []ModuleSummary{
@@ -31,11 +31,17 @@ func TestRenderTextColdModulesHidden(t *testing.T) {
 		},
 	}
 	got := RenderText(payload)
-	if !strings.Contains(got, "hot") {
+	if !strings.Contains(got, "hot (hot)") {
 		t.Fatalf("expected hot module in output: %s", got)
 	}
-	if strings.Contains(got, "cold (cold)") {
-		t.Fatalf("did not expect cold module in output: %s", got)
+	if !strings.Contains(got, "[HOT]") {
+		t.Fatalf("expected [HOT] annotation: %s", got)
+	}
+	if !strings.Contains(got, "cold (cold)") {
+		t.Fatalf("expected cold module in output: %s", got)
+	}
+	if !strings.Contains(got, "[COLD]") {
+		t.Fatalf("expected [COLD] annotation: %s", got)
 	}
 }
 
@@ -48,8 +54,14 @@ func TestRenderTextAllColdModules(t *testing.T) {
 		},
 	}
 	got := RenderText(payload)
-	if !strings.Contains(got, "Modules:\n- (none)") {
-		t.Fatalf("expected '- (none)' when all modules are cold, got:\n%s", got)
+	if strings.Contains(got, "Modules:\n- (none)") {
+		t.Fatalf("should not say (none) in Modules when modules exist, got:\n%s", got)
+	}
+	if !strings.Contains(got, "a (a)") || !strings.Contains(got, "b (b)") {
+		t.Fatalf("expected all cold modules listed, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[COLD]") {
+		t.Fatalf("expected [COLD] annotation, got:\n%s", got)
 	}
 }
 
