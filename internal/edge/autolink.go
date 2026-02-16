@@ -71,7 +71,7 @@ type indexedSymbol struct {
 }
 
 func (a *AutoLinker) loadPackagePaths(ctx context.Context) []string {
-	rows, err := a.db.QueryContext(ctx, `SELECT path FROM packages ORDER BY length(path) DESC;`)
+	rows, err := a.db.QueryContext(ctx, `SELECT path FROM packages WHERE length(path) >= 3 ORDER BY length(path) DESC;`)
 	if err != nil {
 		return nil
 	}

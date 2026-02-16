@@ -60,6 +60,39 @@ func TestAutoLink_FindsDistinctiveSymbols(t *testing.T) {
 	}
 }
 
+func TestAutoLink_SkipsRootPackagePath(t *testing.T) {
+	conn, cleanup := edgeTestDB(t)
+	defer cleanup()
+	now := "2024-01-01T00:00:00Z"
+	// Insert root package "."
+	conn.ExecContext(context.Background(),
+		`INSERT INTO packages (path, name, import_path, created_at, updated_at)
+		 VALUES ('.', 'main', 'example.com/test', ?, ?)`, now, now)
+	conn.ExecContext(context.Background(),
+		`INSERT INTO packages (path, name, import_path, created_at, updated_at)
+		 VALUES ('internal/cli', 'cli', 'example.com/test/internal/cli', ?, ?)`, now, now)
+
+	linker := NewAutoLinker(conn)
+	edges := linker.Detect(context.Background(), "decision", 1,
+		"Some decision.", "This is about internal/cli package.")
+
+	for _, e := range edges {
+		if e.ToRef == "." {
+			t.Fatal("should not auto-link root package path '.'")
+		}
+	}
+	// Should still find internal/cli
+	found := false
+	for _, e := range edges {
+		if e.ToRef == "internal/cli" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected internal/cli in auto-linked edges")
+	}
+}
+
 func TestAutoLink_SkipsShortSymbolNames(t *testing.T) {
 	conn, cleanup := edgeTestDB(t)
 	defer cleanup()
