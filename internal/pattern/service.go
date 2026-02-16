@@ -148,3 +148,35 @@ VALUES ('proposal', ?, ?, ?, ?, ?, ?, ?, 'broken');
 
 	return ProposePatternResult{ProposalID: proposalID, Promoted: false, VerificationPassed: false, VerificationDetails: outcome.Details}, nil
 }
+
+type PatternListItem struct {
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+	Status     string `json:"status"`
+	Drift      string `json:"drift_status"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func (s *Service) ListPatterns(ctx context.Context) ([]PatternListItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.id, p.title, p.confidence, p.status, COALESCE(e.drift_status, 'ok'), p.updated_at
+FROM patterns p
+LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
+WHERE p.status = 'active'
+ORDER BY p.updated_at DESC;
+`)
+	if err != nil {
+		return nil, fmt.Errorf("query patterns: %w", err)
+	}
+	defer rows.Close()
+	items := []PatternListItem{}
+	for rows.Next() {
+		var item PatternListItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Confidence, &item.Status, &item.Drift, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan pattern: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}

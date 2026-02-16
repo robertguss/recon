@@ -20,13 +20,56 @@ func newPatternCommand(app *App) *cobra.Command {
 		checkPattern    string
 		checkScope      string
 		jsonOut         bool
+		listFlag        bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "pattern <title>",
+		Use:   "pattern [<title>]",
 		Short: "Propose a code pattern, verify evidence, and auto-promote when checks pass",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// List mode
+			if listFlag {
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				items, err := pattern.NewService(conn).ListPatterns(cmd.Context())
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+
+				if jsonOut {
+					return writeJSON(items)
+				}
+				if len(items) == 0 {
+					fmt.Println("No active patterns.")
+					return nil
+				}
+				for _, item := range items {
+					fmt.Printf("#%d %s (confidence=%s, drift=%s)\n", item.ID, item.Title, item.Confidence, item.Drift)
+				}
+				return nil
+			}
+
+			// Propose mode
+			if len(args) == 0 {
+				msg := "pattern requires a <title> argument"
+				if jsonOut {
+					_ = writeJSONError("missing_argument", msg, map[string]any{"command": "pattern"})
+					return ExitError{Code: 2}
+				}
+				return ExitError{Code: 2, Message: msg}
+			}
 			title := args[0]
 
 			resolvedSpec, err := buildCheckSpec(checkType, checkSpec, checkPath, checkSymbol, checkPattern, checkScope)
@@ -102,9 +145,7 @@ func newPatternCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkPattern, "check-pattern", "", "Typed check field for grep_pattern: regex pattern")
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
-
-	_ = cmd.MarkFlagRequired("evidence-summary")
-	_ = cmd.MarkFlagRequired("check-type")
+	cmd.Flags().BoolVar(&listFlag, "list", false, "List active patterns")
 
 	return cmd
 }

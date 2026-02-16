@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robertguss/recon/internal/db"
 )
@@ -248,6 +249,48 @@ func TestProposePatternFileExistsNotPromoted(t *testing.T) {
 	}
 	if result.VerificationPassed {
 		t.Fatalf("expected verification not passed")
+	}
+}
+
+func TestListPatterns_ReturnsActivePatterns(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	// Insert a test pattern directly
+	now := time.Now().UTC().Format(time.RFC3339)
+	conn.ExecContext(context.Background(),
+		`INSERT INTO patterns (title, description, confidence, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)`,
+		"Test pattern", "desc", "high", now, now)
+
+	items, err := svc.ListPatterns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 pattern, got %d", len(items))
+	}
+	if items[0].Title != "Test pattern" {
+		t.Fatalf("expected title 'Test pattern', got %q", items[0].Title)
+	}
+}
+
+func TestListPatterns_ExcludesArchived(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	conn.ExecContext(context.Background(),
+		`INSERT INTO patterns (title, description, confidence, status, created_at, updated_at) VALUES (?, ?, ?, 'archived', ?, ?)`,
+		"Archived pattern", "desc", "high", now, now)
+
+	items, err := svc.ListPatterns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 patterns, got %d", len(items))
 	}
 }
 
