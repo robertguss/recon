@@ -112,8 +112,6 @@ func (s *Service) Sync(ctx context.Context, moduleRoot string) (SyncResult, erro
 		LineCount int
 	}
 	packageStats := map[string]*pkgStats{}
-	symbolCount := 0
-
 	for _, file := range files {
 		fset := token.NewFileSet()
 		parsed, err := parser.ParseFile(fset, file.AbsPath, file.Content, parser.ParseComments)
@@ -231,7 +229,6 @@ SELECT id FROM symbols WHERE file_id = ? AND kind = ? AND name = ? AND receiver 
 `, fileID, rec.Kind, rec.Name, rec.Receiver).Scan(&symbolID); err != nil {
 					return SyncResult{}, fmt.Errorf("resolve symbol id for %s: %w", rec.Name, err)
 				}
-				symbolCount++
 
 				for _, dep := range rec.DepRefs {
 					if _, err := tx.ExecContext(ctx, `

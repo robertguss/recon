@@ -2,8 +2,72 @@ package edge
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestAutoLink_SQLMock_ErrorPaths(t *testing.T) {
+	t.Run("loadPackagePaths error", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New: %v", err)
+		}
+		defer db.Close()
+
+		// Force loadPackagePaths to fail
+		mock.ExpectQuery("SELECT path FROM packages").WillReturnError(errors.New("pkg query fail"))
+		// loadFilePaths will also be called; make it fail too
+		mock.ExpectQuery("SELECT path FROM files").WillReturnError(errors.New("file query fail"))
+		// loadExportedSymbols will also be called
+		mock.ExpectQuery("SELECT s.name").WillReturnError(errors.New("sym query fail"))
+
+		linker := NewAutoLinker(db)
+		edges := linker.Detect(context.Background(), "decision", 1,
+			"Some decision", "About internal/cli package")
+
+		// Should return empty edges (no panic) when all queries fail
+		if len(edges) != 0 {
+			t.Fatalf("expected no edges when queries fail, got %d", len(edges))
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expectations: %v", err)
+		}
+	})
+
+	t.Run("loadFilePaths error only", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New: %v", err)
+		}
+		defer db.Close()
+
+		// loadPackagePaths succeeds with no rows
+		mock.ExpectQuery("SELECT path FROM packages").WillReturnRows(
+			sqlmock.NewRows([]string{"path"}))
+		// loadFilePaths fails
+		mock.ExpectQuery("SELECT path FROM files").WillReturnError(errors.New("file query fail"))
+		// loadExportedSymbols succeeds with no rows
+		mock.ExpectQuery("SELECT s.name").WillReturnRows(
+			sqlmock.NewRows([]string{"name", "path"}))
+
+		linker := NewAutoLinker(db)
+		edges := linker.Detect(context.Background(), "decision", 1,
+			"ExitError convention",
+			"Defined in internal/cli/exit_error.go")
+
+		// No panic, edges empty since file query failed
+		if len(edges) != 0 {
+			t.Fatalf("expected no edges when file query fails, got %d", len(edges))
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expectations: %v", err)
+		}
+	})
+}
 
 func TestAutoLink_FindsPackagePaths(t *testing.T) {
 	conn, cleanup := edgeTestDB(t)

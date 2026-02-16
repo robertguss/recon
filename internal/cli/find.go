@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var execCommandContext = exec.CommandContext
+
 func newFindCommand(app *App) *cobra.Command {
 	var (
 		jsonOut       bool
@@ -323,7 +325,7 @@ func enrichFindKnowledge(cmd *cobra.Command, conn *sql.DB, sym find.Symbol) []fi
 }
 
 func enrichPackageHeat(ctx context.Context, moduleRoot string, pkgs []find.PackageSummary) {
-	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=30 days ago", "--name-only", "--pretty=format:")
+	cmd := execCommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=30 days ago", "--name-only", "--pretty=format:")
 	out, err := cmd.Output()
 	if err != nil {
 		return // Non-fatal: heat is optional
@@ -335,16 +337,34 @@ func enrichPackageHeat(ctx context.Context, moduleRoot string, pkgs []find.Packa
 		if line == "" {
 			continue
 		}
-		dir := filepath.Dir(line)
+		dir := filepath.ToSlash(filepath.Dir(line))
 		if dir == "." {
 			counts["."]++
-		} else {
+			continue
+		}
+		// Find the most specific (longest) matching package path
+		bestPath := ""
+		for _, p := range pkgs {
+			if p.Path == "." {
+				continue
+			}
+			if dir == p.Path || strings.HasPrefix(dir, p.Path+"/") {
+				if len(p.Path) > len(bestPath) {
+					bestPath = p.Path
+				}
+			}
+		}
+		if bestPath == "" {
+			// Fallback to root package only if no other match
 			for _, p := range pkgs {
-				if strings.HasPrefix(filepath.ToSlash(dir), p.Path) || (p.Path == "." && !strings.Contains(dir, "/")) {
-					counts[p.Path]++
+				if p.Path == "." {
+					bestPath = "."
 					break
 				}
 			}
+		}
+		if bestPath != "" {
+			counts[bestPath]++
 		}
 	}
 

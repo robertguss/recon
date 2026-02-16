@@ -147,6 +147,7 @@ func newPatternCommand(app *App) *cobra.Command {
 			if result.Promoted {
 				edgeSvc := edge.NewService(conn)
 				// Manual edges from --affects flag
+				var edgeErrors []string
 				for _, ref := range affectsRefs {
 					refType := inferRefType(ref)
 					_, err := edgeSvc.Create(cmd.Context(), edge.CreateInput{
@@ -158,9 +159,21 @@ func newPatternCommand(app *App) *cobra.Command {
 						Source:     "manual",
 						Confidence: "high",
 					})
-					if err != nil && !jsonOut {
-						fmt.Printf("  edge warning: %v\n", err)
+					if err != nil {
+						if jsonOut {
+							edgeErrors = append(edgeErrors, fmt.Sprintf("ref=%s: %v", ref, err))
+						} else {
+							fmt.Printf("  edge warning: %v\n", err)
+						}
 					}
+				}
+				if jsonOut && len(edgeErrors) > 0 {
+					details := map[string]any{
+						"pattern_id": result.PatternID,
+						"errors":     edgeErrors,
+					}
+					_ = writeJSONError("edge_creation_failed", "one or more edges could not be created", details)
+					return ExitError{Code: 2}
 				}
 				// Auto-link from title + reasoning
 				linker := edge.NewAutoLinker(conn)

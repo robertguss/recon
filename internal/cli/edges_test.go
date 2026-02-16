@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/robertguss/recon/internal/db"
@@ -70,6 +71,30 @@ func TestEdgesCreate_Bidirectional(t *testing.T) {
 	}
 	if !foundReverse {
 		t.Fatalf("expected reverse edge decision:2 -> decision:1 (related), got %+v", reverse)
+	}
+}
+
+func TestEdgesCreate_ErrorJSON(t *testing.T) {
+	_, app := m4Setup(t)
+
+	// Use an invalid from_type to force edge.Service.Create to return an error
+	out, _, err := runCommandWithCapture(t, newEdgesCommand(app), []string{
+		"--create",
+		"--from", "bogus:1",
+		"--to", "decision:2",
+		"--relation", "related",
+		"--json",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid from_type, got success")
+	}
+
+	// Verify JSON error output is produced
+	if !strings.Contains(out, `"error"`) || !strings.Contains(out, "internal_error") {
+		t.Fatalf("expected JSON error output with internal_error, got: %s", out)
+	}
+	if !strings.Contains(out, "invalid from_type") {
+		t.Fatalf("expected 'invalid from_type' in JSON error output, got: %s", out)
 	}
 }
 

@@ -30,12 +30,12 @@ func TestDecide_AffectsWorksInJSONMode(t *testing.T) {
 
 	var count int
 	err = conn.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM edges WHERE from_type='decision' AND relation='affects' AND source='manual'`).Scan(&count)
+		`SELECT COUNT(*) FROM edges WHERE from_type='decision' AND relation='affects' AND source='manual' AND to_ref='pkg1' AND to_type='package'`).Scan(&count)
 	if err != nil {
 		t.Fatalf("query edges: %v", err)
 	}
 	if count == 0 {
-		t.Fatal("expected at least one edge from --affects flag in JSON mode, got 0")
+		t.Fatal("expected at least one edge from --affects flag in JSON mode targeting pkg1, got 0")
 	}
 }
 
@@ -62,11 +62,11 @@ func TestPattern_AffectsWorksInJSONMode(t *testing.T) {
 
 	var count int
 	err = conn.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM edges WHERE from_type='pattern' AND relation='affects' AND source='manual'`).Scan(&count)
+		`SELECT COUNT(*) FROM edges WHERE from_type='pattern' AND relation='affects' AND source='manual' AND to_ref='pkg1' AND to_type='package'`).Scan(&count)
 	if err != nil {
 		t.Fatalf("query edges: %v", err)
 	}
 	if count == 0 {
-		t.Fatal("expected at least one edge from --affects flag in JSON mode, got 0")
+		t.Fatal("expected at least one edge from --affects flag in JSON mode targeting pkg1, got 0")
 	}
 }
