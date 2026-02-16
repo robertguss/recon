@@ -59,6 +59,7 @@ type Freshness struct {
 	LastSyncAt     string `json:"last_sync_at,omitempty"`
 	LastSyncCommit string `json:"last_sync_commit,omitempty"`
 	CurrentCommit  string `json:"current_commit,omitempty"`
+	StaleSummary   string `json:"stale_summary,omitempty"`
 }
 
 type Summary struct {
@@ -160,6 +161,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 			LastSyncAt:     state.LastSyncAt.Format(time.RFC3339),
 			LastSyncCommit: state.LastSyncCommit,
 			CurrentCommit:  currentCommit,
+			StaleSummary:   computeStaleSummary(ctx, opts.ModuleRoot, state.LastSyncCommit, currentCommit),
 		}
 	case state.LastSyncDirty != currentDirty:
 		payload.Freshness = Freshness{
@@ -429,4 +431,24 @@ func (s *Service) loadRecentActivity(ctx context.Context, moduleRoot string, pay
 		}
 	}
 	payload.RecentActivity = activity
+}
+
+func computeStaleSummary(ctx context.Context, moduleRoot, fromCommit, toCommit string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", moduleRoot, "rev-list", "--count", fromCommit+".."+toCommit)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	commitCount := strings.TrimSpace(string(out))
+
+	cmd2 := exec.CommandContext(ctx, "git", "-C", moduleRoot, "diff", "--name-only", fromCommit+".."+toCommit)
+	out2, _ := cmd2.Output()
+	fileCount := 0
+	for _, line := range strings.Split(string(out2), "\n") {
+		if strings.TrimSpace(line) != "" {
+			fileCount++
+		}
+	}
+
+	return fmt.Sprintf("%s commits, %d files changed since last sync", commitCount, fileCount)
 }
