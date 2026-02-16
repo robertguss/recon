@@ -358,6 +358,7 @@ func matchFilePath(symbolPath, filter string) bool {
 }
 
 func (s *Service) suggestions(ctx context.Context, symbol string) ([]string, error) {
+	// Pass 1: prefix match (fast, existing behavior)
 	rows, err := s.db.QueryContext(ctx, `
 SELECT DISTINCT name
 FROM symbols
@@ -381,6 +382,29 @@ LIMIT 5;
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate suggestions: %w", err)
 	}
+
+	// Pass 2: case-insensitive substring match if prefix found nothing
+	if len(out) == 0 {
+		rows2, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT name
+FROM symbols
+WHERE LOWER(name) LIKE LOWER(?)
+ORDER BY name
+LIMIT 5;
+`, "%"+symbol+"%")
+		if err != nil {
+			return out, nil // non-fatal
+		}
+		defer rows2.Close()
+		for rows2.Next() {
+			var name string
+			if err := rows2.Scan(&name); err != nil {
+				break
+			}
+			out = append(out, name)
+		}
+	}
+
 	return out, nil
 }
 

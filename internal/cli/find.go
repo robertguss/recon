@@ -116,6 +116,9 @@ func newFindCommand(app *App) *cobra.Command {
 							"symbol":      symbol,
 							"suggestions": e.Suggestions,
 						}
+						if len(e.Suggestions) == 0 {
+							details["tip"] = "try --kind func|type|var|method|const to browse, or --list-packages to see indexed packages"
+						}
 						addFindFilterDetails(details, queryOptions)
 						_ = writeJSONError("not_found", e.Error(), details)
 					} else {
@@ -130,6 +133,8 @@ func newFindCommand(app *App) *cobra.Command {
 							for _, suggestion := range e.Suggestions {
 								fmt.Printf("- %s\n", suggestion)
 							}
+						} else {
+							fmt.Println("Tip: try --kind func|type|var|method|const to browse, or --list-packages to see indexed packages")
 						}
 					}
 					return ExitError{Code: 2}

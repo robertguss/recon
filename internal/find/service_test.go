@@ -438,6 +438,34 @@ func TestListPackages(t *testing.T) {
 	}
 }
 
+func TestSuggestions_SubstringMatch(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a symbol where the search term is in the MIDDLE, not a prefix
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (10,1,'type','MyExitHandler','struct{}','type MyExitHandler struct{}',1,1,1,'');`)
+
+	svc := NewService(conn)
+	// "Exit" doesn't prefix-match MyExitHandler, should only match via substring
+	_, err := svc.Find(context.Background(), "Exit", QueryOptions{})
+	nf, ok := err.(NotFoundError)
+	if !ok {
+		t.Fatalf("expected NotFoundError, got %T (%v)", err, err)
+	}
+	if len(nf.Suggestions) == 0 {
+		t.Fatal("expected at least one suggestion via substring match")
+	}
+	found := false
+	for _, s := range nf.Suggestions {
+		if s == "MyExitHandler" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected MyExitHandler in suggestions, got %v", nf.Suggestions)
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {
