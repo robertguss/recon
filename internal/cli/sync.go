@@ -42,6 +42,13 @@ func newSyncCommand(app *App) *cobra.Command {
 			}
 
 			fmt.Printf("Synced %d files, %d symbols across %d packages\n", result.IndexedFiles, result.IndexedSymbols, result.IndexedPackages)
+			if result.Diff != nil {
+				fmt.Printf("Changes: +%d files, -%d files, ~%d modified\n",
+					result.Diff.FilesAdded, result.Diff.FilesRemoved, result.Diff.FilesModified)
+				fmt.Printf("Symbols: %d → %d | Packages: %d → %d\n",
+					result.Diff.SymbolsBefore, result.Diff.SymbolsAfter,
+					result.Diff.PackagesBefore, result.Diff.PackagesAfter)
+			}
 			fmt.Printf("Fingerprint: %s\n", result.Fingerprint)
 			if result.Commit != "" {
 				fmt.Printf("Git commit: %s dirty=%v\n", result.Commit, result.Dirty)

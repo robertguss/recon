@@ -279,6 +279,76 @@ func F(v thing) {
 	}
 }
 
+func TestSync_ReportsDiff(t *testing.T) {
+	root := t.TempDir()
+	mustWrite := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	mustWrite("go.mod", "module example.com/recon\n")
+	mustWrite("main.go", "package main\nfunc main(){}\n")
+
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	svc := NewService(conn)
+
+	// First sync — Diff should be nil (no previous data)
+	result1, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if result1.Diff != nil {
+		t.Fatalf("expected nil Diff on first sync, got %+v", result1.Diff)
+	}
+
+	// Add a new file
+	mustWrite("extra.go", "package main\n\nfunc Extra() {}\n")
+
+	// Second sync — should report diff
+	result2, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if result2.Diff == nil {
+		t.Fatal("expected Diff to be populated on re-sync")
+	}
+	if result2.Diff.FilesAdded != 1 {
+		t.Fatalf("expected 1 file added, got %d", result2.Diff.FilesAdded)
+	}
+	if result2.Diff.FilesRemoved != 0 {
+		t.Fatalf("expected 0 files removed, got %d", result2.Diff.FilesRemoved)
+	}
+
+	// Remove the extra file and re-sync
+	os.Remove(filepath.Join(root, "extra.go"))
+	result3, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatalf("third Sync: %v", err)
+	}
+	if result3.Diff == nil {
+		t.Fatal("expected Diff on third sync")
+	}
+	if result3.Diff.FilesRemoved != 1 {
+		t.Fatalf("expected 1 file removed, got %d", result3.Diff.FilesRemoved)
+	}
+}
+
 func TestSyncImportUnquoteFallbackAndAliasLocalImportBranches(t *testing.T) {
 	root := t.TempDir()
 	mustWrite := func(path, body string) {

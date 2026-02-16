@@ -24,6 +24,16 @@ var (
 	importPathUnquote    = strconv.Unquote
 )
 
+type SyncDiff struct {
+	FilesAdded     int `json:"files_added"`
+	FilesRemoved   int `json:"files_removed"`
+	FilesModified  int `json:"files_modified"`
+	SymbolsBefore  int `json:"symbols_before"`
+	SymbolsAfter   int `json:"symbols_after"`
+	PackagesBefore int `json:"packages_before"`
+	PackagesAfter  int `json:"packages_after"`
+}
+
 type SyncResult struct {
 	IndexedFiles    int       `json:"indexed_files"`
 	IndexedSymbols  int       `json:"indexed_symbols"`
@@ -32,6 +42,7 @@ type SyncResult struct {
 	Commit          string    `json:"commit"`
 	Dirty           bool      `json:"dirty"`
 	SyncedAt        time.Time `json:"synced_at"`
+	Diff            *SyncDiff `json:"diff,omitempty"`
 }
 
 type Service struct {
@@ -61,6 +72,25 @@ func (s *Service) Sync(ctx context.Context, moduleRoot string) (SyncResult, erro
 		return SyncResult{}, fmt.Errorf("begin sync tx: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Capture previous state for diff computation
+	var prevFiles, prevSymbols, prevPackages int
+	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM files").Scan(&prevFiles)
+	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM symbols").Scan(&prevSymbols)
+	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM packages").Scan(&prevPackages)
+
+	prevHashes := map[string]string{}
+	if prevFiles > 0 {
+		hashRows, hashErr := tx.QueryContext(ctx, "SELECT path, hash FROM files")
+		if hashErr == nil {
+			for hashRows.Next() {
+				var p, h string
+				hashRows.Scan(&p, &h)
+				prevHashes[p] = h
+			}
+			hashRows.Close()
+		}
+	}
 
 	for _, q := range []string{
 		"DELETE FROM symbol_deps;",
@@ -235,6 +265,40 @@ WHERE path = ?;
 		return SyncResult{}, err
 	}
 
+	// Compute diff if there was previous data
+	var diff *SyncDiff
+	if prevFiles > 0 || prevSymbols > 0 || prevPackages > 0 {
+		newPaths := map[string]string{}
+		for _, f := range files {
+			newPaths[f.RelPath] = f.Hash
+		}
+
+		added, removed, modified := 0, 0, 0
+		for p, oldHash := range prevHashes {
+			newHash, exists := newPaths[p]
+			if !exists {
+				removed++
+			} else if oldHash != newHash {
+				modified++
+			}
+		}
+		for p := range newPaths {
+			if _, existed := prevHashes[p]; !existed {
+				added++
+			}
+		}
+
+		diff = &SyncDiff{
+			FilesAdded:     added,
+			FilesRemoved:   removed,
+			FilesModified:  modified,
+			SymbolsBefore:  prevSymbols,
+			SymbolsAfter:   symbolCount,
+			PackagesBefore: prevPackages,
+			PackagesAfter:  len(packageStats),
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return SyncResult{}, fmt.Errorf("commit sync tx: %w", err)
 	}
@@ -247,6 +311,7 @@ WHERE path = ?;
 		Commit:          commit,
 		Dirty:           dirty,
 		SyncedAt:        now,
+		Diff:            diff,
 	}, nil
 }
 
