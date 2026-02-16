@@ -452,3 +452,28 @@ func TestProposeAndVerifyDecisionDBErrors(t *testing.T) {
 		t.Fatalf("expected insert proposal error without migrations, got %v", err)
 	}
 }
+
+func TestRunGrepPattern_FindsVarDeclaration(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n\ngo 1.21\n"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nvar osGetwd = os.Getwd\n"), 0644)
+
+	if _, err := db.EnsureReconDir(tmpDir); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(tmpDir))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	svc := NewService(conn)
+
+	outcome := svc.RunCheckPublic(context.Background(), "grep_pattern", `{"pattern":"var osGetwd"}`, tmpDir)
+	if !outcome.Passed {
+		t.Fatalf("expected grep_pattern to pass, got: %s", outcome.Details)
+	}
+}
