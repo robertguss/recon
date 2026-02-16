@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/robertguss/recon/internal/edge"
 	"github.com/robertguss/recon/internal/pattern"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,7 @@ func newPatternCommand(app *App) *cobra.Command {
 		jsonOut         bool
 		listFlag        bool
 		deleteID        int64
+		affectsRefs     []string
 	)
 
 	cmd := &cobra.Command{
@@ -153,6 +155,37 @@ func newPatternCommand(app *App) *cobra.Command {
 				return writeJSON(result)
 			}
 
+			// Create edges after successful promotion
+			if result.Promoted {
+				edgeSvc := edge.NewService(conn)
+				// Manual edges from --affects flag
+				for _, ref := range affectsRefs {
+					refType := inferRefType(ref)
+					_, err := edgeSvc.Create(cmd.Context(), edge.CreateInput{
+						FromType:   "pattern",
+						FromID:     result.PatternID,
+						ToType:     refType,
+						ToRef:      ref,
+						Relation:   "affects",
+						Source:     "manual",
+						Confidence: "high",
+					})
+					if err != nil && !jsonOut {
+						fmt.Printf("  edge warning: %v\n", err)
+					}
+				}
+				// Auto-link from title + description
+				linker := edge.NewAutoLinker(conn)
+				detected := linker.Detect(cmd.Context(), "pattern", result.PatternID, title, description)
+				for _, d := range detected {
+					edgeSvc.Create(cmd.Context(), edge.CreateInput{
+						FromType: "pattern", FromID: result.PatternID,
+						ToType: d.ToType, ToRef: d.ToRef, Relation: d.Relation,
+						Source: "auto", Confidence: "medium",
+					})
+				}
+			}
+
 			if result.Promoted {
 				fmt.Printf("Pattern promoted: proposal=%d pattern=%d\n", result.ProposalID, result.PatternID)
 			} else {
@@ -179,6 +212,7 @@ func newPatternCommand(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active patterns")
 	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a pattern by ID")
+	cmd.Flags().StringSliceVar(&affectsRefs, "affects", nil, "Package/file/symbol this pattern affects (creates edges)")
 
 	return cmd
 }
