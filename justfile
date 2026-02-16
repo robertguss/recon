@@ -10,7 +10,7 @@ default:
 [group('build')]
 build:
     mkdir -p bin
-    go build -o bin/recon ./cmd/recon
+    go build -ldflags "-X github.com/robertguss/recon/internal/cli.Version=dev -X github.com/robertguss/recon/internal/cli.Commit=$(git rev-parse --short HEAD)" -o bin/recon ./cmd/recon
 
 # Install recon to GOPATH/bin.
 [group('build')]
