@@ -95,6 +95,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 	}
 
 	id, _ := res.LastInsertId()
+
+	// Insert reverse for bidirectional relations
+	if BidirectionalRelations[in.Relation] && validFromTypes[in.ToType] {
+		_, err := s.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO edges (from_type, from_id, to_type, to_ref, relation, source, confidence, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+`, in.ToType, toIDFromRef(in.ToRef), in.FromType, fmt.Sprintf("%d", in.FromID), in.Relation, in.Source, in.Confidence, now)
+		if err != nil {
+			return Edge{}, fmt.Errorf("insert reverse edge: %w", err)
+		}
+	}
+
 	return Edge{
 		ID: id, FromType: in.FromType, FromID: in.FromID,
 		ToType: in.ToType, ToRef: in.ToRef, Relation: in.Relation,
@@ -103,14 +115,29 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM edges WHERE id = ?;`, id)
+	// Fetch the edge first to check for bidirectional reverse
+	var e Edge
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, from_type, from_id, to_type, to_ref, relation FROM edges WHERE id = ?;
+`, id).Scan(&e.ID, &e.FromType, &e.FromID, &e.ToType, &e.ToRef, &e.Relation)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("edge %d: %w", id, ErrNotFound)
+		}
+		return fmt.Errorf("fetch edge: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM edges WHERE id = ?;`, id); err != nil {
 		return fmt.Errorf("delete edge: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("edge %d: %w", id, ErrNotFound)
+
+	// Delete reverse if bidirectional
+	if BidirectionalRelations[e.Relation] && validFromTypes[e.ToType] {
+		s.db.ExecContext(ctx, `
+DELETE FROM edges WHERE from_type = ? AND from_id = ? AND to_type = ? AND to_ref = ? AND relation = ?;
+`, e.ToType, toIDFromRef(e.ToRef), e.FromType, fmt.Sprintf("%d", e.FromID), e.Relation)
 	}
+
 	return nil
 }
 
@@ -154,6 +181,12 @@ func (s *Service) query(ctx context.Context, q string, args ...any) ([]Edge, err
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
+}
+
+func toIDFromRef(ref string) int64 {
+	var id int64
+	fmt.Sscanf(ref, "%d", &id)
+	return id
 }
 
 func validate(in CreateInput) error {

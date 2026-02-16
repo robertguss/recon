@@ -190,6 +190,58 @@ func TestListTo(t *testing.T) {
 	}
 }
 
+func TestCreateEdge_Bidirectional(t *testing.T) {
+	conn, cleanup := edgeTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+	ctx := context.Background()
+
+	_, err := svc.Create(ctx, CreateInput{
+		FromType: "decision", FromID: 1,
+		ToType: "decision", ToRef: "2",
+		Relation: "related", Source: "manual", Confidence: "high",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Reverse edge should exist
+	edges, err := svc.ListFrom(ctx, "decision", 2)
+	if err != nil {
+		t.Fatalf("ListFrom: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 reverse edge, got %d", len(edges))
+	}
+	if edges[0].ToRef != "1" || edges[0].Relation != "related" {
+		t.Fatalf("unexpected reverse edge: %+v", edges[0])
+	}
+}
+
+func TestDeleteEdge_Bidirectional(t *testing.T) {
+	conn, cleanup := edgeTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+	ctx := context.Background()
+
+	e, _ := svc.Create(ctx, CreateInput{
+		FromType: "decision", FromID: 1,
+		ToType: "decision", ToRef: "2",
+		Relation: "related", Source: "manual", Confidence: "high",
+	})
+
+	// Delete the forward edge
+	if err := svc.Delete(ctx, e.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Reverse should also be gone
+	edges, _ := svc.ListFrom(ctx, "decision", 2)
+	if len(edges) != 0 {
+		t.Fatalf("expected 0 edges after bidirectional delete, got %d", len(edges))
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
 }
