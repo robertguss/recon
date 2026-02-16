@@ -62,6 +62,9 @@ func newRecallCommand(app *App) *cobra.Command {
 				}
 				fmt.Printf("- [%s] #%d %s [%s] drift=%s\n", label, id, item.Title, item.Confidence, item.EvidenceDrift)
 				fmt.Printf("  %s\n", item.EvidenceSummary)
+				for _, ce := range item.ConnectedEdges {
+					fmt.Printf("    %s: %s (%s)\n", ce.Relation, ce.ToRef, ce.ToType)
+				}
 			}
 			return nil
 		},

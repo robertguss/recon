@@ -141,6 +141,31 @@ func TestRecallSkipsArchivedDecisionInFTS(t *testing.T) {
 	}
 }
 
+func TestRecall_IncludesConnectedEdges(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	// recallTestDB seeds decision 1 "Use Cobra"
+	// Add an edge from that decision to a package
+	_, _ = conn.Exec(`INSERT INTO edges(from_type,from_id,to_type,to_ref,relation,source,confidence,created_at) VALUES ('decision',1,'package','internal/cli','affects','manual','high','2026-01-01T00:00:00Z')`)
+
+	svc := NewService(conn)
+	res, err := svc.Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(res.Items) == 0 {
+		t.Fatal("expected recall results")
+	}
+	item := res.Items[0]
+	if len(item.ConnectedEdges) == 0 {
+		t.Fatal("expected connected edges on recall result")
+	}
+	if item.ConnectedEdges[0].ToType != "package" || item.ConnectedEdges[0].ToRef != "internal/cli" {
+		t.Fatalf("unexpected connected edge: %+v", item.ConnectedEdges[0])
+	}
+}
+
 func TestRecallLegacyQueriesWhenPatternsTableMissing(t *testing.T) {
 	conn, cleanup := recallTestDB(t)
 	defer cleanup()

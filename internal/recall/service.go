@@ -11,16 +11,23 @@ type RecallOptions struct {
 	Limit int
 }
 
+type ConnectedEdge struct {
+	ToType   string `json:"to_type"`
+	ToRef    string `json:"to_ref"`
+	Relation string `json:"relation"`
+}
+
 type Item struct {
-	DecisionID      int64  `json:"decision_id,omitempty"`
-	PatternID       int64  `json:"pattern_id,omitempty"`
-	EntityType      string `json:"entity_type"`
-	Title           string `json:"title"`
-	Reasoning       string `json:"reasoning"`
-	Confidence      string `json:"confidence"`
-	UpdatedAt       string `json:"updated_at"`
-	EvidenceSummary string `json:"evidence_summary"`
-	EvidenceDrift   string `json:"evidence_drift_status"`
+	DecisionID      int64           `json:"decision_id,omitempty"`
+	PatternID       int64           `json:"pattern_id,omitempty"`
+	EntityType      string          `json:"entity_type"`
+	Title           string          `json:"title"`
+	Reasoning       string          `json:"reasoning"`
+	Confidence      string          `json:"confidence"`
+	UpdatedAt       string          `json:"updated_at"`
+	EvidenceSummary string          `json:"evidence_summary"`
+	EvidenceDrift   string          `json:"evidence_drift_status"`
+	ConnectedEdges  []ConnectedEdge `json:"connected_edges,omitempty"`
 }
 
 type Result struct {
@@ -49,7 +56,38 @@ func (s *Service) Recall(ctx context.Context, query string, opts RecallOptions) 
 		}
 	}
 
+	s.enrichWithEdges(ctx, items)
 	return Result{Query: query, Items: items}, nil
+}
+
+func (s *Service) enrichWithEdges(ctx context.Context, items []Item) {
+	for i := range items {
+		entityType := items[i].EntityType
+		var entityID int64
+		if entityType == "pattern" {
+			entityID = items[i].PatternID
+		} else {
+			entityID = items[i].DecisionID
+		}
+
+		rows, err := s.db.QueryContext(ctx, `
+SELECT to_type, to_ref, relation FROM edges
+WHERE from_type = ? AND from_id = ?
+ORDER BY relation, to_type;
+`, entityType, entityID)
+		if err != nil {
+			continue
+		}
+
+		for rows.Next() {
+			var ce ConnectedEdge
+			if err := rows.Scan(&ce.ToType, &ce.ToRef, &ce.Relation); err != nil {
+				continue
+			}
+			items[i].ConnectedEdges = append(items[i].ConnectedEdges, ce)
+		}
+		rows.Close()
+	}
 }
 
 func (s *Service) recallFTS(ctx context.Context, query string, limit int) ([]Item, error) {
