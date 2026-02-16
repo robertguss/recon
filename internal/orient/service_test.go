@@ -358,7 +358,7 @@ func TestRenderTextAllSections(t *testing.T) {
 		Architecture: Architecture{EntryPoints: []string{"cmd/main.go"}, DependencyFlow: []DependencyEdge{{From: "cmd", To: []string{"pkg"}}}},
 		Freshness:    Freshness{IsStale: true, Reason: "stale", LastSyncAt: "2026-01-01T00:00:00Z"},
 		Summary:      Summary{FileCount: 1, SymbolCount: 2, PackageCount: 1, DecisionCount: 1},
-		Modules:      []ModuleSummary{},
+		Modules:      []ModuleSummary{{Path: "cmd", Name: "cmd"}, {Path: "pkg", Name: "pkg"}},
 		ActiveDecisions: []DecisionDigest{
 			{ID: 1, Title: "d1", Confidence: "high", Drift: "ok", UpdatedAt: "2026-01-01T00:00:00Z"},
 		},
@@ -376,7 +376,7 @@ func TestRenderTextAllSections(t *testing.T) {
 		"Dependency flow: cmd → pkg",
 		"STALE CONTEXT: stale",
 		"Last sync: 2026-01-01T00:00:00Z",
-		"- (none)", // Modules empty
+		"- cmd (cmd)",
 		"- #1 d1",
 		"Active patterns:",
 		"- #1 p1",
@@ -403,7 +403,8 @@ func TestRenderDependencyFlowEdges(t *testing.T) {
 		t.Fatal("expected no dependency flow for empty edges")
 	}
 
-	// Single edge
+	// Single edge (with matching modules)
+	payload.Modules = []ModuleSummary{{Path: "cmd", Name: "cmd"}, {Path: "pkg", Name: "pkg"}}
 	payload.Architecture.DependencyFlow = []DependencyEdge{{From: "cmd", To: []string{"pkg"}}}
 	text = RenderText(payload)
 	if !strings.Contains(text, "Dependency flow:") || !strings.Contains(text, "pkg") {
@@ -411,10 +412,19 @@ func TestRenderDependencyFlowEdges(t *testing.T) {
 	}
 
 	// Multi dep
+	payload.Modules = []ModuleSummary{{Path: "cmd", Name: "cmd"}, {Path: "pkg1", Name: "pkg1"}, {Path: "pkg2", Name: "pkg2"}}
 	payload.Architecture.DependencyFlow = []DependencyEdge{{From: "cmd", To: []string{"pkg1", "pkg2"}}}
 	text = RenderText(payload)
 	if !strings.Contains(text, "pkg1") || !strings.Contains(text, "pkg2") {
 		t.Fatalf("expected multi dep flow in text, got:\n%s", text)
+	}
+
+	// Edges without matching modules show count
+	payload.Modules = []ModuleSummary{}
+	payload.Architecture.DependencyFlow = []DependencyEdge{{From: "a", To: []string{"b"}}}
+	text = RenderText(payload)
+	if !strings.Contains(text, "1 edges (none between top modules)") {
+		t.Fatalf("expected fallback count message, got:\n%s", text)
 	}
 }
 

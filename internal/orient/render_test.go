@@ -65,6 +65,32 @@ func TestRenderTextAllColdModules(t *testing.T) {
 	}
 }
 
+func TestRenderTextDependencyFlowTruncation(t *testing.T) {
+	payload := Payload{
+		Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"},
+		Modules: []ModuleSummary{
+			{Path: "internal/cli", Name: "cli", FileCount: 5, LineCount: 100, Heat: "hot"},
+			{Path: "internal/db", Name: "db", FileCount: 2, LineCount: 50, Heat: "hot"},
+		},
+		Architecture: Architecture{
+			DependencyFlow: []DependencyEdge{
+				{From: "internal/cli", To: []string{"internal/db"}},
+				{From: "internal/cli", To: []string{"internal/util"}},        // internal/util not in modules
+				{From: "internal/something", To: []string{"internal/other"}}, // neither in modules
+			},
+		},
+	}
+	got := RenderText(payload)
+	// Should show the inter-module dep
+	if !strings.Contains(got, "internal/cli → internal/db") {
+		t.Fatalf("expected inter-module dep in output: %s", got)
+	}
+	// Should show "+2 more" for the two non-inter-module edges
+	if !strings.Contains(got, "(+2 more)") {
+		t.Fatalf("expected (+2 more) in output: %s", got)
+	}
+}
+
 func TestRenderTextEmptySections(t *testing.T) {
 	got := RenderText(Payload{Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"}})
 	if !strings.Contains(got, "- (none)") {

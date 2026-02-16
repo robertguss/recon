@@ -15,15 +15,44 @@ func RenderText(payload Payload) string {
 		fmt.Fprintf(&b, "Entry points: %s\n", strings.Join(payload.Architecture.EntryPoints, ", "))
 	}
 	if len(payload.Architecture.DependencyFlow) > 0 {
-		parts := make([]string, 0, len(payload.Architecture.DependencyFlow))
+		// Collect top module paths for filtering
+		topModules := map[string]bool{}
+		for _, m := range payload.Modules {
+			topModules[m.Path] = true
+		}
+
+		// Filter to only inter-module deps (both from and to in top modules)
+		var interModuleDeps []string
 		for _, edge := range payload.Architecture.DependencyFlow {
-			if len(edge.To) == 1 {
-				parts = append(parts, edge.From+" → "+edge.To[0])
+			if !topModules[edge.From] {
+				continue
+			}
+			relevantTos := make([]string, 0, len(edge.To))
+			for _, to := range edge.To {
+				if topModules[to] {
+					relevantTos = append(relevantTos, to)
+				}
+			}
+			if len(relevantTos) == 0 {
+				continue
+			}
+			if len(relevantTos) == 1 {
+				interModuleDeps = append(interModuleDeps, edge.From+" → "+relevantTos[0])
 			} else {
-				parts = append(parts, edge.From+" → {"+strings.Join(edge.To, ", ")+"}")
+				interModuleDeps = append(interModuleDeps, edge.From+" → {"+strings.Join(relevantTos, ", ")+"}")
 			}
 		}
-		fmt.Fprintf(&b, "Dependency flow: %s\n", strings.Join(parts, "; "))
+
+		totalEdges := len(payload.Architecture.DependencyFlow)
+		if len(interModuleDeps) > 0 {
+			fmt.Fprintf(&b, "Dependency flow: %s", strings.Join(interModuleDeps, "; "))
+			if totalEdges > len(interModuleDeps) {
+				fmt.Fprintf(&b, " (+%d more)", totalEdges-len(interModuleDeps))
+			}
+			fmt.Fprintln(&b)
+		} else {
+			fmt.Fprintf(&b, "Dependency flow: %d edges (none between top modules)\n", totalEdges)
+		}
 	}
 	b.WriteString("\n")
 
