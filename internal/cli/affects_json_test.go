@@ -44,7 +44,7 @@ func TestPattern_AffectsWorksInJSONMode(t *testing.T) {
 
 	// Run pattern with --json --affects
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
-		"Test pattern JSON affects", "--description", "d", "--evidence-summary", "e",
+		"Test pattern JSON affects", "--reasoning", "d", "--evidence-summary", "e",
 		"--check-type", "file_exists", "--check-path", "go.mod",
 		"--affects", "pkg1",
 		"--json",

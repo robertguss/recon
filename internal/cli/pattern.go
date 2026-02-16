@@ -11,7 +11,7 @@ import (
 
 func newPatternCommand(app *App) *cobra.Command {
 	var (
-		description     string
+		reasoning       string
 		example         string
 		confidence      string
 		evidenceSummary string
@@ -127,7 +127,7 @@ func newPatternCommand(app *App) *cobra.Command {
 
 			result, err := pattern.NewService(conn).ProposeAndVerifyPattern(cmd.Context(), pattern.ProposePatternInput{
 				Title:           title,
-				Description:     description,
+				Description:     reasoning,
 				Example:         example,
 				Confidence:      confidence,
 				EvidenceSummary: evidenceSummary,
@@ -162,9 +162,9 @@ func newPatternCommand(app *App) *cobra.Command {
 						fmt.Printf("  edge warning: %v\n", err)
 					}
 				}
-				// Auto-link from title + description
+				// Auto-link from title + reasoning
 				linker := edge.NewAutoLinker(conn)
-				detected := linker.Detect(cmd.Context(), "pattern", result.PatternID, title, description)
+				detected := linker.Detect(cmd.Context(), "pattern", result.PatternID, title, reasoning)
 				for _, d := range detected {
 					edgeSvc.Create(cmd.Context(), edge.CreateInput{
 						FromType: "pattern", FromID: result.PatternID,
@@ -199,7 +199,7 @@ func newPatternCommand(app *App) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&description, "description", "", "Pattern description")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "Pattern reasoning")
 	cmd.Flags().StringVar(&example, "example", "", "Code example demonstrating the pattern")
 	cmd.Flags().StringVar(&confidence, "confidence", "medium", "Confidence: low, medium, high")
 	cmd.Flags().StringVar(&evidenceSummary, "evidence-summary", "", "Evidence summary")

@@ -67,7 +67,7 @@ func TestM4PatternTextPromoted(t *testing.T) {
 	_, app := m4Setup(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern promoted text",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "go.mod exists",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -87,7 +87,7 @@ func TestM4PatternTextNotPromoted(t *testing.T) {
 	_, app := m4Setup(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern pending text",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "missing file",
 		"--check-type", "file_exists",
 		"--check-path", "nonexistent_file.txt",
@@ -107,7 +107,7 @@ func TestM4PatternJSONVerifyFailed(t *testing.T) {
 	_, app := m4Setup(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern verify fail json",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "missing file",
 		"--check-type", "file_exists",
 		"--check-path", "nonexistent_file.txt",
@@ -125,7 +125,7 @@ func TestM4PatternJSONInternalError(t *testing.T) {
 	_, app := m4SetupBrokenDB(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern internal err",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -143,7 +143,7 @@ func TestM4PatternTextBuildCheckSpecError(t *testing.T) {
 	_, app := m4Setup(t)
 	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern bad spec text",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -158,7 +158,7 @@ func TestM4PatternJSONBuildCheckSpecError(t *testing.T) {
 	_, app := m4Setup(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern bad spec json",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -177,7 +177,7 @@ func TestM4PatternTextNoDBError(t *testing.T) {
 	_, app := m4SetupNoInit(t)
 	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern no db",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -194,7 +194,7 @@ func TestM4PatternJSONNoDBError(t *testing.T) {
 	_, app := m4SetupNoInit(t)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern no db json",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -212,7 +212,7 @@ func TestM4PatternTextInternalError(t *testing.T) {
 	_, app := m4SetupBrokenDB(t)
 	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Pattern internal err text",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "e",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
@@ -759,7 +759,7 @@ func TestM4RecallTextPatternEntityType(t *testing.T) {
 	// Create a pattern so recall returns a pattern entity type
 	if _, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Recall pattern test",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "go.mod exists",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",
