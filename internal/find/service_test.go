@@ -436,6 +436,10 @@ func TestListPackages(t *testing.T) {
 	if pkgs[0].FileCount != 3 || pkgs[0].LineCount != 150 {
 		t.Fatalf("unexpected counts: %+v", pkgs[0])
 	}
+	// Heat and RecentCommits are zero-valued from DB (enriched by CLI layer)
+	if pkgs[0].Heat != "" {
+		t.Fatalf("expected empty heat from DB, got %q", pkgs[0].Heat)
+	}
 }
 
 func TestSuggestions_SubstringMatch(t *testing.T) {

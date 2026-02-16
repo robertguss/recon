@@ -89,10 +89,12 @@ type ListResult struct {
 }
 
 type PackageSummary struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	FileCount int    `json:"file_count"`
-	LineCount int    `json:"line_count"`
+	Path          string `json:"path"`
+	Name          string `json:"name"`
+	FileCount     int    `json:"file_count"`
+	LineCount     int    `json:"line_count"`
+	Heat          string `json:"heat,omitempty"`
+	RecentCommits int    `json:"recent_commits,omitempty"`
 }
 
 func (s *Service) ListPackages(ctx context.Context) ([]PackageSummary, error) {
