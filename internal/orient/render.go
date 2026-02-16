@@ -14,8 +14,16 @@ func RenderText(payload Payload) string {
 	if len(payload.Architecture.EntryPoints) > 0 {
 		fmt.Fprintf(&b, "Entry points: %s\n", strings.Join(payload.Architecture.EntryPoints, ", "))
 	}
-	if payload.Architecture.DependencyFlow != "" {
-		fmt.Fprintf(&b, "Dependency flow: %s\n", payload.Architecture.DependencyFlow)
+	if len(payload.Architecture.DependencyFlow) > 0 {
+		parts := make([]string, 0, len(payload.Architecture.DependencyFlow))
+		for _, edge := range payload.Architecture.DependencyFlow {
+			if len(edge.To) == 1 {
+				parts = append(parts, edge.From+" → "+edge.To[0])
+			} else {
+				parts = append(parts, edge.From+" → {"+strings.Join(edge.To, ", ")+"}")
+			}
+		}
+		fmt.Fprintf(&b, "Dependency flow: %s\n", strings.Join(parts, "; "))
 	}
 	b.WriteString("\n")
 

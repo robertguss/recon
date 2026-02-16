@@ -355,7 +355,7 @@ func TestOrientShowsActivePatterns(t *testing.T) {
 func TestRenderTextAllSections(t *testing.T) {
 	payload := Payload{
 		Project:      ProjectInfo{Name: "proj", Language: "go", ModulePath: "example.com/proj"},
-		Architecture: Architecture{EntryPoints: []string{"cmd/main.go"}, DependencyFlow: "cmd → pkg"},
+		Architecture: Architecture{EntryPoints: []string{"cmd/main.go"}, DependencyFlow: []DependencyEdge{{From: "cmd", To: []string{"pkg"}}}},
 		Freshness:    Freshness{IsStale: true, Reason: "stale", LastSyncAt: "2026-01-01T00:00:00Z"},
 		Summary:      Summary{FileCount: 1, SymbolCount: 2, PackageCount: 1, DecisionCount: 1},
 		Modules:      []ModuleSummary{},
@@ -391,20 +391,60 @@ func TestRenderTextAllSections(t *testing.T) {
 	}
 }
 
-func TestFormatDependencyFlowVariants(t *testing.T) {
-	// Empty
-	if got := formatDependencyFlow(nil); got != "" {
-		t.Fatalf("expected empty, got %q", got)
+func TestRenderDependencyFlowEdges(t *testing.T) {
+	// Empty edges should not render dependency flow
+	payload := Payload{
+		Architecture: Architecture{
+			DependencyFlow: []DependencyEdge{},
+		},
 	}
-	// Single dep
-	got := formatDependencyFlow(map[string][]string{"cmd": {"pkg"}})
-	if !strings.Contains(got, "cmd → pkg") {
-		t.Fatalf("expected single dep flow, got %q", got)
+	text := RenderText(payload)
+	if strings.Contains(text, "Dependency flow") {
+		t.Fatal("expected no dependency flow for empty edges")
 	}
+
+	// Single edge
+	payload.Architecture.DependencyFlow = []DependencyEdge{{From: "cmd", To: []string{"pkg"}}}
+	text = RenderText(payload)
+	if !strings.Contains(text, "Dependency flow:") || !strings.Contains(text, "pkg") {
+		t.Fatalf("expected single dep flow in text, got:\n%s", text)
+	}
+
 	// Multi dep
-	got = formatDependencyFlow(map[string][]string{"cmd": {"pkg1", "pkg2"}})
-	if !strings.Contains(got, "cmd → {pkg1, pkg2}") {
-		t.Fatalf("expected multi dep flow, got %q", got)
+	payload.Architecture.DependencyFlow = []DependencyEdge{{From: "cmd", To: []string{"pkg1", "pkg2"}}}
+	text = RenderText(payload)
+	if !strings.Contains(text, "pkg1") || !strings.Contains(text, "pkg2") {
+		t.Fatalf("expected multi dep flow in text, got:\n%s", text)
+	}
+}
+
+func TestBuild_DependencyFlowIsStructured(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	// Seed packages and imports directly to ensure dependency edges exist
+	now := "2026-01-01T00:00:00Z"
+	conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (1,'cmd/recon','main','example.com/recon/cmd/recon',1,10,?,?)`, now, now)
+	conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'pkg','pkg','example.com/recon/pkg',1,5,?,?)`, now, now)
+	conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (1,1,'cmd/recon/main.go','go',10,'h1',?,?)`, now, now)
+	conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (2,2,'pkg/pkg.go','go',5,'h2',?,?)`, now, now)
+	conn.Exec(`INSERT INTO imports(from_file_id,to_path,to_package_id,alias,import_type) VALUES (1,'example.com/recon/pkg',2,'pkg','local')`)
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if len(payload.Architecture.DependencyFlow) == 0 {
+		t.Fatal("expected structured dependency flow")
+	}
+	edge := payload.Architecture.DependencyFlow[0]
+	if edge.From == "" || len(edge.To) == 0 {
+		t.Fatal("expected non-empty from and to fields")
 	}
 }
 

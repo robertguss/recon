@@ -37,9 +37,14 @@ type RecentFile struct {
 	LastModified string `json:"last_modified"`
 }
 
+type DependencyEdge struct {
+	From string   `json:"from"`
+	To   []string `json:"to"`
+}
+
 type Architecture struct {
-	EntryPoints    []string `json:"entry_points"`
-	DependencyFlow string   `json:"dependency_flow"`
+	EntryPoints    []string         `json:"entry_points"`
+	DependencyFlow []DependencyEdge `json:"dependency_flow"`
 }
 
 type ProjectInfo struct {
@@ -343,25 +348,16 @@ ORDER BY p1.path, p2.path;
 		return fmt.Errorf("iterate dep flow: %w", err)
 	}
 
-	flow := formatDependencyFlow(flowParts)
-	payload.Architecture = Architecture{EntryPoints: entryPoints, DependencyFlow: flow}
+	edges := make([]DependencyEdge, 0, len(flowParts))
+	for from, tos := range flowParts {
+		sort.Strings(tos)
+		edges = append(edges, DependencyEdge{From: from, To: tos})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		return edges[i].From < edges[j].From
+	})
+	payload.Architecture = Architecture{EntryPoints: entryPoints, DependencyFlow: edges}
 	return nil
-}
-
-func formatDependencyFlow(deps map[string][]string) string {
-	if len(deps) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(deps))
-	for from, tos := range deps {
-		if len(tos) == 1 {
-			parts = append(parts, from+" → "+tos[0])
-		} else {
-			parts = append(parts, from+" → {"+strings.Join(tos, ", ")+"}")
-		}
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, "; ")
 }
 
 func (s *Service) loadModuleHeat(ctx context.Context, moduleRoot string, payload *Payload) {

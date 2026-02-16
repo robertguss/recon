@@ -109,7 +109,7 @@ func TestLoadArchitectureErrorBranches(t *testing.T) {
 	if len(payload.Architecture.EntryPoints) != 1 || payload.Architecture.EntryPoints[0] != "main.go" {
 		t.Fatalf("expected 1 entry point 'main.go', got %v", payload.Architecture.EntryPoints)
 	}
-	if payload.Architecture.DependencyFlow == "" {
+	if len(payload.Architecture.DependencyFlow) == 0 {
 		t.Fatal("expected non-empty dependency flow")
 	}
 }
