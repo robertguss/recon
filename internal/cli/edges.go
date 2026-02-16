@@ -12,11 +12,15 @@ import (
 
 func newEdgesCommand(app *App) *cobra.Command {
 	var (
-		jsonOut  bool
-		fromRef  string
-		toRef    string
-		deleteID int64
-		listAll  bool
+		jsonOut    bool
+		fromRef    string
+		toRef      string
+		deleteID   int64
+		listAll    bool
+		createFlag bool
+		relation   string
+		source     string
+		confidence string
 	)
 
 	cmd := &cobra.Command{
@@ -33,6 +37,57 @@ func newEdgesCommand(app *App) *cobra.Command {
 			defer conn.Close()
 
 			svc := edge.NewService(conn)
+
+			// Create mode
+			if createFlag {
+				if fromRef == "" || toRef == "" {
+					msg := "edges --create requires --from and --to"
+					if jsonOut {
+						_ = writeJSONError("missing_argument", msg, nil)
+						return ExitError{Code: 2}
+					}
+					return ExitError{Code: 2, Message: msg}
+				}
+				fromType, fromID, err := parseEntityRef(fromRef)
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("invalid_input", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				parts := strings.SplitN(toRef, ":", 2)
+				if len(parts) != 2 {
+					msg := "invalid --to format; use type:ref (e.g., decision:2, package:internal/cli)"
+					if jsonOut {
+						_ = writeJSONError("invalid_input", msg, nil)
+						return ExitError{Code: 2}
+					}
+					return ExitError{Code: 2, Message: msg}
+				}
+				created, err := svc.Create(cmd.Context(), edge.CreateInput{
+					FromType:   fromType,
+					FromID:     fromID,
+					ToType:     parts[0],
+					ToRef:      parts[1],
+					Relation:   relation,
+					Source:     source,
+					Confidence: confidence,
+				})
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(created)
+				}
+				fmt.Printf("Edge #%d created: %s:%d -[%s]-> %s:%s\n",
+					created.ID, created.FromType, created.FromID, created.Relation, created.ToType, created.ToRef)
+				return nil
+			}
 
 			// Delete mode
 			if deleteID > 0 {
@@ -111,7 +166,7 @@ func newEdgesCommand(app *App) *cobra.Command {
 				return renderEdges(edges, jsonOut)
 			}
 
-			msg := "edges requires --from, --to, --delete, or --list"
+			msg := "edges requires --create, --from, --to, --delete, or --list"
 			if jsonOut {
 				_ = writeJSONError("missing_argument", msg, nil)
 				return ExitError{Code: 2}
@@ -121,8 +176,12 @@ func newEdgesCommand(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
-	cmd.Flags().StringVar(&fromRef, "from", "", "List edges from entity (e.g., decision:2)")
-	cmd.Flags().StringVar(&toRef, "to", "", "List edges to entity (e.g., package:internal/cli)")
+	cmd.Flags().BoolVar(&createFlag, "create", false, "Create a new edge")
+	cmd.Flags().StringVar(&fromRef, "from", "", "Entity ref (e.g., decision:2)")
+	cmd.Flags().StringVar(&toRef, "to", "", "Entity ref (e.g., package:internal/cli, decision:3)")
+	cmd.Flags().StringVar(&relation, "relation", "affects", "Edge relation: affects, evidenced_by, supersedes, contradicts, related, reinforces")
+	cmd.Flags().StringVar(&source, "source", "manual", "Edge source: manual, auto")
+	cmd.Flags().StringVar(&confidence, "confidence", "high", "Edge confidence: low, medium, high")
 	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Delete an edge by ID")
 	cmd.Flags().BoolVar(&listAll, "list", false, "List all edges")
 
