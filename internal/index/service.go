@@ -245,6 +245,12 @@ VALUES (?, ?, ?, ?);
 		}
 	}
 
+	// Query actual symbol count from DB (loop counter may overcount due to ON CONFLICT)
+	var actualSymbolCount int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM symbols").Scan(&actualSymbolCount); err != nil {
+		return SyncResult{}, fmt.Errorf("count symbols: %w", err)
+	}
+
 	for pkgPath, stats := range packageStats {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE packages
@@ -293,7 +299,7 @@ WHERE path = ?;
 			FilesRemoved:   removed,
 			FilesModified:  modified,
 			SymbolsBefore:  prevSymbols,
-			SymbolsAfter:   symbolCount,
+			SymbolsAfter:   actualSymbolCount,
 			PackagesBefore: prevPackages,
 			PackagesAfter:  len(packageStats),
 		}
@@ -305,7 +311,7 @@ WHERE path = ?;
 
 	return SyncResult{
 		IndexedFiles:    len(files),
-		IndexedSymbols:  symbolCount,
+		IndexedSymbols:  actualSymbolCount,
 		IndexedPackages: len(packageStats),
 		Fingerprint:     fingerprint,
 		Commit:          commit,
