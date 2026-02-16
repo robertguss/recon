@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/robertguss/recon/internal/edge"
 	"github.com/robertguss/recon/internal/knowledge"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,7 @@ func newDecideCommand(app *App) *cobra.Command {
 		deleteID        int64
 		updateID        int64
 		dryRun          bool
+		affectsRefs     []string
 	)
 
 	cmd := &cobra.Command{
@@ -244,6 +246,37 @@ func newDecideCommand(app *App) *cobra.Command {
 				return writeJSON(result)
 			}
 
+			// Create edges after successful promotion
+			if result.Promoted {
+				edgeSvc := edge.NewService(conn)
+				// Manual edges from --affects flag
+				for _, ref := range affectsRefs {
+					refType := inferRefType(ref)
+					_, err := edgeSvc.Create(cmd.Context(), edge.CreateInput{
+						FromType:   "decision",
+						FromID:     result.DecisionID,
+						ToType:     refType,
+						ToRef:      ref,
+						Relation:   "affects",
+						Source:     "manual",
+						Confidence: "high",
+					})
+					if err != nil && !jsonOut {
+						fmt.Printf("  edge warning: %v\n", err)
+					}
+				}
+				// Auto-link from title + reasoning
+				linker := edge.NewAutoLinker(conn)
+				detected := linker.Detect(cmd.Context(), "decision", result.DecisionID, title, reasoning)
+				for _, d := range detected {
+					edgeSvc.Create(cmd.Context(), edge.CreateInput{
+						FromType: "decision", FromID: result.DecisionID,
+						ToType: d.ToType, ToRef: d.ToRef, Relation: d.Relation,
+						Source: "auto", Confidence: "medium",
+					})
+				}
+			}
+
 			if result.Promoted {
 				fmt.Printf("Decision promoted: proposal=%d decision=%d\n", result.ProposalID, result.DecisionID)
 			} else {
@@ -271,6 +304,7 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a decision by ID")
 	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run verification check only, without creating any state")
+	cmd.Flags().StringSliceVar(&affectsRefs, "affects", nil, "Package/file/symbol this decision affects (creates edges)")
 
 	return cmd
 }
@@ -357,6 +391,16 @@ func classifyDecideError(checkType string, err error) (string, any) {
 		return code, map[string]any{"check_type": checkType}
 	}
 	return "internal_error", nil
+}
+
+func inferRefType(ref string) string {
+	if strings.Contains(ref, ".go") {
+		return "file"
+	}
+	if strings.Contains(ref, ".") && !strings.Contains(ref, "/") {
+		return "symbol"
+	}
+	return "package"
 }
 
 func classifyDecideMessage(msg string) string {
