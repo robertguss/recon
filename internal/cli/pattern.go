@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/robertguss/recon/internal/pattern"
@@ -21,6 +22,7 @@ func newPatternCommand(app *App) *cobra.Command {
 		checkScope      string
 		jsonOut         bool
 		listFlag        bool
+		deleteID        int64
 	)
 
 	cmd := &cobra.Command{
@@ -58,6 +60,36 @@ func newPatternCommand(app *App) *cobra.Command {
 				for _, item := range items {
 					fmt.Printf("#%d %s (confidence=%s, drift=%s)\n", item.ID, item.Title, item.Confidence, item.Drift)
 				}
+				return nil
+			}
+
+			// Delete mode
+			if deleteID > 0 {
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				err = pattern.NewService(conn).ArchivePattern(cmd.Context(), deleteID)
+				if err != nil {
+					if jsonOut {
+						code := "internal_error"
+						if errors.Is(err, pattern.ErrNotFound) {
+							code = "not_found"
+						}
+						_ = writeJSONError(code, err.Error(), map[string]any{"id": deleteID})
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(map[string]any{"archived": true, "id": deleteID})
+				}
+				fmt.Printf("Pattern %d archived.\n", deleteID)
 				return nil
 			}
 
@@ -146,6 +178,7 @@ func newPatternCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active patterns")
+	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a pattern by ID")
 
 	return cmd
 }

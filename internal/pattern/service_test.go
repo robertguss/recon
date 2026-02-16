@@ -294,6 +294,40 @@ func TestListPatterns_ExcludesArchived(t *testing.T) {
 	}
 }
 
+func TestArchivePattern_SoftDeletes(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, _ := conn.ExecContext(context.Background(),
+		`INSERT INTO patterns (title, description, confidence, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)`,
+		"To archive", "desc", "medium", now, now)
+	id, _ := res.LastInsertId()
+
+	err := svc.ArchivePattern(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	conn.QueryRowContext(context.Background(), "SELECT status FROM patterns WHERE id = ?", id).Scan(&status)
+	if status != "archived" {
+		t.Fatalf("expected status 'archived', got %q", status)
+	}
+}
+
+func TestArchivePattern_NotFound(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	err := svc.ArchivePattern(context.Background(), 9999)
+	if err == nil {
+		t.Fatal("expected error for non-existent pattern")
+	}
+}
+
 func TestProposePatternDBError(t *testing.T) {
 	conn, root, cleanup := patternTestDB(t)
 	cleanup() // Close immediately

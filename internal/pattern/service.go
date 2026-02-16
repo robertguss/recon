@@ -149,6 +149,22 @@ VALUES ('proposal', ?, ?, ?, ?, ?, ?, ?, 'broken');
 	return ProposePatternResult{ProposalID: proposalID, Promoted: false, VerificationPassed: false, VerificationDetails: outcome.Details}, nil
 }
 
+var ErrNotFound = fmt.Errorf("not found")
+
+func (s *Service) ArchivePattern(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE patterns SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active';`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("archive pattern: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pattern %d: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 type PatternListItem struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
