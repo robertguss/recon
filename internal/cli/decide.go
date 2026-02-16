@@ -233,20 +233,7 @@ func newDecideCommand(app *App) *cobra.Command {
 				return err
 			}
 
-			if jsonOut {
-				if !result.VerificationPassed {
-					errorCode := classifyDecideMessage(result.VerificationDetails)
-					details := map[string]any{
-						"proposal_id": result.ProposalID,
-						"check_type":  checkType,
-					}
-					_ = writeJSONError(errorCode, result.VerificationDetails, details)
-					return ExitError{Code: 2}
-				}
-				return writeJSON(result)
-			}
-
-			// Create edges after successful promotion
+			// Create edges after successful promotion (both JSON and text paths)
 			if result.Promoted {
 				edgeSvc := edge.NewService(conn)
 				// Manual edges from --affects flag
@@ -275,6 +262,19 @@ func newDecideCommand(app *App) *cobra.Command {
 						Source: "auto", Confidence: "medium",
 					})
 				}
+			}
+
+			if jsonOut {
+				if !result.VerificationPassed {
+					errorCode := classifyDecideMessage(result.VerificationDetails)
+					details := map[string]any{
+						"proposal_id": result.ProposalID,
+						"check_type":  checkType,
+					}
+					_ = writeJSONError(errorCode, result.VerificationDetails, details)
+					return ExitError{Code: 2}
+				}
+				return writeJSON(result)
 			}
 
 			if result.Promoted {
