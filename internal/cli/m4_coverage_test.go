@@ -995,3 +995,33 @@ func TestM4FindMissingArgJSONMode(t *testing.T) {
 		t.Fatalf("expected missing_argument envelope, out=%q", out)
 	}
 }
+
+func TestM4FindJSONIncludesKnowledgeEdges(t *testing.T) {
+	_, app := m4Setup(t)
+
+	// Open the DB to seed a decision and edge pointing at pkg1
+	conn, err := openExistingDB(app)
+	if err != nil {
+		t.Fatalf("openExistingDB: %v", err)
+	}
+	defer conn.Close()
+
+	_, _ = conn.Exec(`INSERT INTO decisions(id,title,reasoning,confidence,status,created_at,updated_at)
+		VALUES (1,'Use pkg1 pattern','Because reasons','high','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	_, _ = conn.Exec(`INSERT INTO edges(from_type,from_id,to_type,to_ref,relation,source,confidence,created_at)
+		VALUES ('decision',1,'package','pkg1','affects','manual','high','2026-01-01T00:00:00Z')`)
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Ambig", "--package", "pkg1", "--json"})
+	if err != nil {
+		t.Fatalf("find Ambig --json error: %v", err)
+	}
+	if !strings.Contains(out, `"knowledge"`) {
+		t.Fatalf("expected knowledge field in JSON output, out=%q", out)
+	}
+	if !strings.Contains(out, `"Use pkg1 pattern"`) {
+		t.Fatalf("expected decision title in knowledge, out=%q", out)
+	}
+	if !strings.Contains(out, `"affects"`) {
+		t.Fatalf("expected relation in knowledge, out=%q", out)
+	}
+}

@@ -21,9 +21,18 @@ type Symbol struct {
 	Package   string `json:"package"`
 }
 
+type KnowledgeLink struct {
+	EntityType string `json:"entity_type"`
+	EntityID   int64  `json:"entity_id"`
+	Title      string `json:"title"`
+	Relation   string `json:"relation"`
+	Confidence string `json:"confidence"`
+}
+
 type Result struct {
-	Symbol       Symbol   `json:"symbol"`
-	Dependencies []Symbol `json:"dependencies"`
+	Symbol       Symbol          `json:"symbol"`
+	Dependencies []Symbol        `json:"dependencies"`
+	Knowledge    []KnowledgeLink `json:"knowledge,omitempty"`
 }
 
 type QueryOptions struct {

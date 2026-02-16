@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"github.com/robertguss/recon/internal/edge"
 	"github.com/robertguss/recon/internal/find"
 	"github.com/spf13/cobra"
 )
@@ -168,6 +170,7 @@ func newFindCommand(app *App) *cobra.Command {
 			}
 
 			if jsonOut {
+				result.Knowledge = enrichFindKnowledge(cmd, conn, result.Symbol)
 				return writeJSON(result)
 			}
 
@@ -291,4 +294,43 @@ func truncateBody(body string, maxLines int) string {
 		return body
 	}
 	return strings.Join(append(lines[:maxLines], "... (truncated)"), "\n")
+}
+
+func enrichFindKnowledge(cmd *cobra.Command, conn *sql.DB, sym find.Symbol) []find.KnowledgeLink {
+	edgeSvc := edge.NewService(conn)
+	var links []find.KnowledgeLink
+
+	// Edges pointing at this symbol's package
+	if sym.Package != "" {
+		pkgEdges, _ := edgeSvc.ListTo(cmd.Context(), "package", sym.Package)
+		for _, e := range pkgEdges {
+			links = append(links, edgeToKnowledgeLink(conn, e))
+		}
+	}
+
+	// Edges pointing at this symbol directly
+	symRef := sym.Package + "." + sym.Name
+	symEdges, _ := edgeSvc.ListTo(cmd.Context(), "symbol", symRef)
+	for _, e := range symEdges {
+		links = append(links, edgeToKnowledgeLink(conn, e))
+	}
+
+	return links
+}
+
+func edgeToKnowledgeLink(conn *sql.DB, e edge.Edge) find.KnowledgeLink {
+	link := find.KnowledgeLink{
+		EntityType: e.FromType,
+		EntityID:   e.FromID,
+		Relation:   e.Relation,
+		Confidence: e.Confidence,
+	}
+	// Resolve title from the source entity
+	switch e.FromType {
+	case "decision":
+		_ = conn.QueryRow(`SELECT title FROM decisions WHERE id = ?`, e.FromID).Scan(&link.Title)
+	case "pattern":
+		_ = conn.QueryRow(`SELECT title FROM patterns WHERE id = ?`, e.FromID).Scan(&link.Title)
+	}
+	return link
 }
