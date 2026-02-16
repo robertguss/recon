@@ -94,6 +94,28 @@ func TestRecallFindsDecisionByRelatedTerms(t *testing.T) {
 	}
 }
 
+func TestRecall_ReasoningAndEvidenceSummarySeparate(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	svc := NewService(conn)
+	res, err := svc.Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(res.Items) == 0 {
+		t.Fatal("expected recall results")
+	}
+	item := res.Items[0]
+	// Reasoning should be ONLY the reasoning text, not contain evidence summary
+	if item.Reasoning != "Because subcommands" {
+		t.Fatalf("expected reasoning='Because subcommands', got %q", item.Reasoning)
+	}
+	if item.EvidenceSummary != "cobra in go.mod" {
+		t.Fatalf("expected evidence_summary='cobra in go.mod', got %q", item.EvidenceSummary)
+	}
+}
+
 func TestRecallErrorsAndScanItems(t *testing.T) {
 	conn, cleanup := recallTestDB(t)
 	defer cleanup()
