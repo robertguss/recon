@@ -79,6 +79,35 @@ type ListResult struct {
 	Limit   int      `json:"limit"`
 }
 
+type PackageSummary struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	FileCount int    `json:"file_count"`
+	LineCount int    `json:"line_count"`
+}
+
+func (s *Service) ListPackages(ctx context.Context) ([]PackageSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path, name, file_count, line_count FROM packages ORDER BY line_count DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query packages: %w", err)
+	}
+	defer rows.Close()
+
+	var pkgs []PackageSummary
+	for rows.Next() {
+		var p PackageSummary
+		if err := rows.Scan(&p.Path, &p.Name, &p.FileCount, &p.LineCount); err != nil {
+			return nil, fmt.Errorf("scan package: %w", err)
+		}
+		pkgs = append(pkgs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate packages: %w", err)
+	}
+	return pkgs, nil
+}
+
 func (s *Service) List(ctx context.Context, opts QueryOptions, limit int) (ListResult, error) {
 	opts = normalizeQueryOptions(opts)
 	if !hasActiveFilters(opts) {
@@ -133,8 +162,14 @@ func buildListWhere(opts QueryOptions) (string, []any) {
 	clauses := []string{"1=1"}
 	args := []any{}
 	if opts.PackagePath != "" {
-		clauses = append(clauses, "COALESCE(p.path, '.') = ?")
-		args = append(args, opts.PackagePath)
+		if !strings.Contains(opts.PackagePath, "/") {
+			// Short name: match exact or last path segment
+			clauses = append(clauses, "(COALESCE(p.path, '.') = ? OR COALESCE(p.path, '.') LIKE ?)")
+			args = append(args, opts.PackagePath, "%/"+opts.PackagePath)
+		} else {
+			clauses = append(clauses, "COALESCE(p.path, '.') = ?")
+			args = append(args, opts.PackagePath)
+		}
 	}
 	if opts.FilePath != "" {
 		if !strings.Contains(opts.FilePath, "/") {
@@ -281,7 +316,7 @@ func hasActiveFilters(opts QueryOptions) bool {
 func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 	filtered := make([]Symbol, 0, len(matches))
 	for _, match := range matches {
-		if opts.PackagePath != "" && match.Package != opts.PackagePath {
+		if opts.PackagePath != "" && !matchPackagePath(match.Package, opts.PackagePath) {
 			continue
 		}
 		if opts.FilePath != "" && !matchFilePath(normalizeFilePath(match.FilePath), opts.FilePath) {
@@ -293,6 +328,21 @@ func filterMatches(matches []Symbol, opts QueryOptions) []Symbol {
 		filtered = append(filtered, match)
 	}
 	return filtered
+}
+
+func matchPackagePath(pkgPath, filter string) bool {
+	if pkgPath == filter {
+		return true
+	}
+	// Short name: match last segment
+	if !strings.Contains(filter, "/") {
+		lastSeg := pkgPath
+		if idx := strings.LastIndex(pkgPath, "/"); idx >= 0 {
+			lastSeg = pkgPath[idx+1:]
+		}
+		return lastSeg == filter
+	}
+	return false
 }
 
 func matchFilePath(symbolPath, filter string) bool {

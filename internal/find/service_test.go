@@ -351,6 +351,93 @@ func TestMatchFilePathHasSuffix(t *testing.T) {
 	}
 }
 
+func TestFindWithShortPackageName(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a symbol in a nested package
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'internal/index','index','example.com/recon/internal/index',1,50,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'internal/index/service.go','go',50,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','NewService','func()','func NewService(){}',1,1,1,'');`)
+
+	// Short name should match
+	res, err := NewService(conn).Find(context.Background(), "NewService", QueryOptions{PackagePath: "index"})
+	if err != nil {
+		t.Fatalf("Find with short package name error: %v", err)
+	}
+	if res.Symbol.Package != "internal/index" {
+		t.Fatalf("expected package internal/index, got %s", res.Symbol.Package)
+	}
+}
+
+func TestListWithShortPackageName(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a symbol in a nested package
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'internal/index','index','example.com/recon/internal/index',1,50,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (3,2,'internal/index/service.go','go',50,'h3','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (5,3,'func','NewService','func()','func NewService(){}',1,1,1,'');`)
+
+	// Short name should match in list mode
+	result, err := NewService(conn).List(context.Background(), QueryOptions{PackagePath: "index"}, 50)
+	if err != nil {
+		t.Fatalf("List with short package name error: %v", err)
+	}
+	if len(result.Symbols) == 0 {
+		t.Fatalf("expected symbols from short package name, got none")
+	}
+	if result.Symbols[0].Package != "internal/index" {
+		t.Fatalf("expected package internal/index, got %s", result.Symbols[0].Package)
+	}
+}
+
+func TestMatchPackagePathEdgeCases(t *testing.T) {
+	// Exact match
+	if !matchPackagePath("internal/index", "internal/index") {
+		t.Fatal("expected exact match")
+	}
+	// Short name match
+	if !matchPackagePath("internal/index", "index") {
+		t.Fatal("expected short name match")
+	}
+	// Short name no match
+	if matchPackagePath("internal/index", "other") {
+		t.Fatal("expected no match for different short name")
+	}
+	// Filter with slash that doesn't match
+	if matchPackagePath("internal/index", "pkg/index") {
+		t.Fatal("expected no match for different full path")
+	}
+	// Single-segment package with short name
+	if !matchPackagePath("index", "index") {
+		t.Fatal("expected match for single-segment package")
+	}
+}
+
+func TestListPackages(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add a second package
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (2,'internal/index','index','example.com/recon/internal/index',3,150,'x','x');`)
+
+	pkgs, err := NewService(conn).ListPackages(context.Background())
+	if err != nil {
+		t.Fatalf("ListPackages error: %v", err)
+	}
+	if len(pkgs) != 2 {
+		t.Fatalf("expected 2 packages, got %d", len(pkgs))
+	}
+	// Should be ordered by line_count DESC
+	if pkgs[0].Path != "internal/index" {
+		t.Fatalf("expected largest package first, got %s", pkgs[0].Path)
+	}
+	if pkgs[0].FileCount != 3 || pkgs[0].LineCount != 150 {
+		t.Fatalf("unexpected counts: %+v", pkgs[0])
+	}
+}
+
 func TestErrorStrings(t *testing.T) {
 	nf := NotFoundError{Symbol: "x", Suggestions: nil}
 	if nf.Error() == "" {
