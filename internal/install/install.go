@@ -136,7 +136,11 @@ func InstallSettings(root string) error {
 		hooks = make(map[string]any)
 	}
 
-	hooks["SessionStart"] = []any{sessionStartEntry}
+	// Merge into existing SessionStart entries rather than replacing.
+	currentEntries, _ := hooks["SessionStart"].([]any)
+	if !hasReconHook(currentEntries) {
+		hooks["SessionStart"] = append(currentEntries, sessionStartEntry)
+	}
 	settings["hooks"] = hooks
 
 	data, err := marshalJSON(settings, "", "  ")
@@ -145,4 +149,31 @@ func InstallSettings(root string) error {
 	}
 
 	return os.WriteFile(settingsPath, append(data, '\n'), 0o644)
+}
+
+const reconHookCommand = ".claude/hooks/recon-orient.sh"
+
+// hasReconHook checks whether a SessionStart entries list already contains
+// a hook pointing to the recon orient script.
+func hasReconHook(entries []any) bool {
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		hooksList, ok := entryMap["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, h := range hooksList {
+			hMap, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			if cmd, _ := hMap["command"].(string); cmd == reconHookCommand {
+				return true
+			}
+		}
+	}
+	return false
 }

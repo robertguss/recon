@@ -255,6 +255,84 @@ func TestInstallSettings(t *testing.T) {
 		}
 	})
 
+	t.Run("preserves existing SessionStart hooks", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		existing := `{"hooks": {"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "echo existing-hook"}]}]}}`
+		if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(existing), 0o644); err != nil {
+			t.Fatalf("write existing: %v", err)
+		}
+
+		if err := InstallSettings(root); err != nil {
+			t.Fatalf("InstallSettings: %v", err)
+		}
+
+		got, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
+		if err != nil {
+			t.Fatalf("read settings: %v", err)
+		}
+
+		var settings map[string]any
+		if err := json.Unmarshal(got, &settings); err != nil {
+			t.Fatalf("parse settings: %v", err)
+		}
+
+		hooks := settings["hooks"].(map[string]any)
+		sessionStart := hooks["SessionStart"].([]any)
+		if len(sessionStart) != 2 {
+			t.Fatalf("expected 2 SessionStart entries (existing + recon), got %d", len(sessionStart))
+		}
+
+		// Verify the existing hook is still there
+		first := sessionStart[0].(map[string]any)
+		firstHooks := first["hooks"].([]any)
+		firstHook := firstHooks[0].(map[string]any)
+		if firstHook["command"] != "echo existing-hook" {
+			t.Fatal("existing SessionStart hook was not preserved")
+		}
+
+		// Verify recon hook was appended
+		second := sessionStart[1].(map[string]any)
+		secondHooks := second["hooks"].([]any)
+		secondHook := secondHooks[0].(map[string]any)
+		if secondHook["command"] != ".claude/hooks/recon-orient.sh" {
+			t.Fatal("recon hook was not appended")
+		}
+	})
+
+	t.Run("skips if recon hook already present", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		existing := `{"hooks": {"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": ".claude/hooks/recon-orient.sh"}]}]}}`
+		if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(existing), 0o644); err != nil {
+			t.Fatalf("write existing: %v", err)
+		}
+
+		if err := InstallSettings(root); err != nil {
+			t.Fatalf("InstallSettings: %v", err)
+		}
+
+		got, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
+		if err != nil {
+			t.Fatalf("read settings: %v", err)
+		}
+
+		var settings map[string]any
+		if err := json.Unmarshal(got, &settings); err != nil {
+			t.Fatalf("parse settings: %v", err)
+		}
+
+		hooks := settings["hooks"].(map[string]any)
+		sessionStart := hooks["SessionStart"].([]any)
+		if len(sessionStart) != 1 {
+			t.Fatalf("expected 1 SessionStart entry (no duplicate), got %d", len(sessionStart))
+		}
+	})
+
 	t.Run("error on invalid existing JSON", func(t *testing.T) {
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {

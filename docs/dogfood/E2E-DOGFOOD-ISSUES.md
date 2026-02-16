@@ -13,7 +13,7 @@ missing features — not correctness bugs.
 
 ## P0 — Documentation Drift
 
-### 1. CLAUDE.md references flags that don't exist
+### 1. CLAUDE.md references flags that don't exist - ✅
 
 The project CLAUDE.md and the `/recon` skill reference CLI flags that differ
 from the actual implementation. An AI agent reading CLAUDE.md will construct
@@ -36,14 +36,14 @@ discovering the correct flags.
 **Fix:** Audit CLAUDE.md and the `/recon` skill against `--help` output for
 every command. Ensure all documented examples actually work.
 
-### 2. `/recon` skill likely has same drift
+### 2. `/recon` skill likely has same drift - ✅
 
 The skill file that Claude Code loads when `/recon` is invoked probably
 references the same incorrect flags. Needs the same audit.
 
 ---
 
-## P1 — Ergonomics Issues
+## P1 — Ergonomics Issues - ✅
 
 ### 3. `recon init` mutates `.claude/` directory in target repo
 
