@@ -612,6 +612,50 @@ func TestBuild_StaleFreshnessIncludesSummary(t *testing.T) {
 	}
 }
 
+func TestBuild_ModulesIncludeEdges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn := setupOrientDB(t, root)
+	defer conn.Close()
+
+	now := "2026-01-01T00:00:00Z"
+	// Seed a package
+	conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (1,'internal/cli','cli','example.com/recon/internal/cli',5,200,?,?)`, now, now)
+	// Seed a decision
+	conn.Exec(`INSERT INTO decisions(id,title,reasoning,confidence,status,created_at,updated_at) VALUES (1,'ExitError convention','All commands use ExitError','high','active',?,?)`, now, now)
+	// Seed an edge: decision:1 -> package:internal/cli (affects)
+	conn.Exec(`INSERT INTO edges(from_type,from_id,to_type,to_ref,relation,source,confidence,created_at) VALUES ('decision',1,'package','internal/cli','affects','manual','high',?)`, now)
+
+	payload, err := NewService(conn).Build(context.Background(), BuildOptions{ModuleRoot: root})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	var found bool
+	for _, m := range payload.Modules {
+		if m.Path == "internal/cli" {
+			if len(m.Knowledge) == 0 {
+				t.Fatal("expected knowledge entries for internal/cli module")
+			}
+			if m.Knowledge[0].Type != "decision" || m.Knowledge[0].ID != 1 || m.Knowledge[0].Title != "ExitError convention" {
+				t.Fatalf("unexpected knowledge: %+v", m.Knowledge[0])
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected internal/cli module in payload")
+	}
+
+	// Verify text rendering includes the knowledge
+	text := RenderText(payload)
+	if !strings.Contains(text, "decision #1: ExitError convention") {
+		t.Fatalf("expected knowledge in text output, got:\n%s", text)
+	}
+}
+
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

@@ -69,13 +69,21 @@ type Summary struct {
 	DecisionCount int `json:"decision_count"`
 }
 
+type ModuleKnowledge struct {
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	Confidence string `json:"confidence"`
+}
+
 type ModuleSummary struct {
-	Path          string `json:"path"`
-	Name          string `json:"name"`
-	FileCount     int    `json:"file_count"`
-	LineCount     int    `json:"line_count"`
-	Heat          string `json:"heat"`
-	RecentCommits int    `json:"recent_commits"`
+	Path          string            `json:"path"`
+	Name          string            `json:"name"`
+	FileCount     int               `json:"file_count"`
+	LineCount     int               `json:"line_count"`
+	Heat          string            `json:"heat"`
+	RecentCommits int               `json:"recent_commits"`
+	Knowledge     []ModuleKnowledge `json:"knowledge,omitempty"`
 }
 
 type DecisionDigest struct {
@@ -142,6 +150,7 @@ func (s *Service) Build(ctx context.Context, opts BuildOptions) (Payload, error)
 	if err := s.loadArchitecture(ctx, &payload); err != nil {
 		return Payload{}, err
 	}
+	s.loadModuleEdges(ctx, &payload)
 	s.loadModuleHeat(ctx, opts.ModuleRoot, &payload)
 	s.loadRecentActivity(ctx, opts.ModuleRoot, &payload)
 
@@ -297,6 +306,46 @@ LIMIT ?;
 		return fmt.Errorf("iterate pattern rows: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) loadModuleEdges(ctx context.Context, payload *Payload) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT e.to_ref, e.from_type, e.from_id,
+       COALESCE(d.title, p.title, '') AS title,
+       COALESCE(d.confidence, p.confidence, 'medium') AS confidence
+FROM edges e
+LEFT JOIN decisions d ON e.from_type = 'decision' AND e.from_id = d.id AND d.status = 'active'
+LEFT JOIN patterns p ON e.from_type = 'pattern' AND e.from_id = p.id AND p.status = 'active'
+WHERE e.to_type = 'package' AND e.relation = 'affects'
+  AND (d.id IS NOT NULL OR p.id IS NOT NULL)
+ORDER BY e.to_ref, e.from_type, confidence DESC;
+`)
+	if err != nil {
+		return // Non-fatal: edges table might not exist in older DBs
+	}
+	defer rows.Close()
+
+	moduleKnowledge := map[string][]ModuleKnowledge{}
+	for rows.Next() {
+		var pkgPath, fromType string
+		var fromID int64
+		var title, confidence string
+		if err := rows.Scan(&pkgPath, &fromType, &fromID, &title, &confidence); err != nil {
+			continue
+		}
+		moduleKnowledge[pkgPath] = append(moduleKnowledge[pkgPath], ModuleKnowledge{
+			ID: fromID, Type: fromType, Title: title, Confidence: confidence,
+		})
+	}
+
+	for i := range payload.Modules {
+		if k, ok := moduleKnowledge[payload.Modules[i].Path]; ok {
+			if len(k) > 5 {
+				k = k[:5]
+			}
+			payload.Modules[i].Knowledge = k
+		}
+	}
 }
 
 func (s *Service) loadArchitecture(ctx context.Context, payload *Payload) error {
