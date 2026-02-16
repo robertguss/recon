@@ -43,6 +43,18 @@ func (a *AutoLinker) Detect(ctx context.Context, fromType string, fromID int64, 
 		}
 	}
 
+	// Match file paths
+	files := a.loadFilePaths(ctx)
+	for _, fp := range files {
+		if strings.Contains(text, fp) {
+			key := "file:" + fp
+			if !seen[key] {
+				seen[key] = true
+				edges = append(edges, DetectedEdge{ToType: "file", ToRef: fp, Relation: "affects"})
+			}
+		}
+	}
+
 	// Match distinctive exported symbol names
 	symbols := a.loadExportedSymbols(ctx)
 	for _, sym := range symbols {
@@ -72,6 +84,24 @@ type indexedSymbol struct {
 
 func (a *AutoLinker) loadPackagePaths(ctx context.Context) []string {
 	rows, err := a.db.QueryContext(ctx, `SELECT path FROM packages WHERE length(path) >= 3 ORDER BY length(path) DESC;`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			continue
+		}
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+func (a *AutoLinker) loadFilePaths(ctx context.Context) []string {
+	rows, err := a.db.QueryContext(ctx, `SELECT path FROM files WHERE path LIKE '%.go' ORDER BY length(path) DESC;`)
 	if err != nil {
 		return nil
 	}
