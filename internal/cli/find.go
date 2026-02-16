@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -10,6 +12,8 @@ import (
 	"github.com/robertguss/recon/internal/find"
 	"github.com/spf13/cobra"
 )
+
+var execCommandContext = exec.CommandContext
 
 func newFindCommand(app *App) *cobra.Command {
 	var (
@@ -47,13 +51,15 @@ func newFindCommand(app *App) *cobra.Command {
 					return err
 				}
 
+				enrichPackageHeat(cmd.Context(), app.ModuleRoot, pkgs)
+
 				if jsonOut {
 					return writeJSON(pkgs)
 				}
 
 				fmt.Printf("Packages (%d):\n", len(pkgs))
 				for _, p := range pkgs {
-					fmt.Printf("- %s  %d files  %d lines\n", p.Path, p.FileCount, p.LineCount)
+					fmt.Printf("- %s  %d files  %d lines  [%s]\n", p.Path, p.FileCount, p.LineCount, strings.ToUpper(p.Heat))
 				}
 				return nil
 			}
@@ -316,6 +322,64 @@ func enrichFindKnowledge(cmd *cobra.Command, conn *sql.DB, sym find.Symbol) []fi
 	}
 
 	return links
+}
+
+func enrichPackageHeat(ctx context.Context, moduleRoot string, pkgs []find.PackageSummary) {
+	cmd := execCommandContext(ctx, "git", "-C", moduleRoot, "log", "--since=30 days ago", "--name-only", "--pretty=format:")
+	out, err := cmd.Output()
+	if err != nil {
+		return // Non-fatal: heat is optional
+	}
+
+	counts := map[string]int{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(line))
+		if dir == "." {
+			counts["."]++
+			continue
+		}
+		// Find the most specific (longest) matching package path
+		bestPath := ""
+		for _, p := range pkgs {
+			if p.Path == "." {
+				continue
+			}
+			if dir == p.Path || strings.HasPrefix(dir, p.Path+"/") {
+				if len(p.Path) > len(bestPath) {
+					bestPath = p.Path
+				}
+			}
+		}
+		if bestPath == "" {
+			// Fallback to root package only if no other match
+			for _, p := range pkgs {
+				if p.Path == "." {
+					bestPath = "."
+					break
+				}
+			}
+		}
+		if bestPath != "" {
+			counts[bestPath]++
+		}
+	}
+
+	for i := range pkgs {
+		c := counts[pkgs[i].Path]
+		pkgs[i].RecentCommits = c
+		switch {
+		case c >= 4:
+			pkgs[i].Heat = "hot"
+		case c >= 1:
+			pkgs[i].Heat = "warm"
+		default:
+			pkgs[i].Heat = "cold"
+		}
+	}
 }
 
 func edgeToKnowledgeLink(conn *sql.DB, e edge.Edge) find.KnowledgeLink {

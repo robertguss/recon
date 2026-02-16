@@ -213,3 +213,36 @@ func TestProposePatternMarshalProposalDataError(t *testing.T) {
 		t.Fatalf("expected marshal proposal data error, got %v", err)
 	}
 }
+
+func TestListPatternsScanError(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer mockDB.Close()
+
+	mock.ExpectQuery("SELECT p.id").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "confidence", "status", "drift_status", "updated_at"}).
+			AddRow("bad-id", "t", "high", "active", "ok", "2026-01-01"),
+	)
+
+	_, err = NewService(mockDB).ListPatterns(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "scan pattern") {
+		t.Fatalf("expected scan pattern error, got %v", err)
+	}
+}
+
+func TestArchivePatternExecError(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer mockDB.Close()
+
+	mock.ExpectExec("UPDATE patterns").WillReturnError(errors.New("exec fail"))
+
+	err = NewService(mockDB).ArchivePattern(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "archive pattern") {
+		t.Fatalf("expected archive pattern error, got %v", err)
+	}
+}

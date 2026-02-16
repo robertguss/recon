@@ -133,12 +133,25 @@ func TestSyncSQLMockErrorBranches(t *testing.T) {
 			wantErr: "insert symbol dep",
 		},
 		{
+			name: "count symbols error",
+			src:  "package main\n",
+			setupMock: func(mock sqlmock.Sqlmock) {
+				expectResetTables(mock)
+				mock.ExpectExec("INSERT INTO packages").WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectExec("INSERT INTO files").WillReturnResult(sqlmock.NewResult(2, 1))
+				mock.ExpectQuery("SELECT COUNT").WillReturnError(errors.New("count fail"))
+				mock.ExpectRollback()
+			},
+			wantErr: "count symbols",
+		},
+		{
 			name: "update package stats error",
 			src:  "package main\n",
 			setupMock: func(mock sqlmock.Sqlmock) {
 				expectResetTables(mock)
 				mock.ExpectExec("INSERT INTO packages").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec("INSERT INTO files").WillReturnResult(sqlmock.NewResult(2, 1))
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 				mock.ExpectExec("UPDATE packages").WillReturnError(errors.New("update pkg fail"))
 				mock.ExpectRollback()
 			},
@@ -151,6 +164,7 @@ func TestSyncSQLMockErrorBranches(t *testing.T) {
 				expectResetTables(mock)
 				mock.ExpectExec("INSERT INTO packages").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec("INSERT INTO files").WillReturnResult(sqlmock.NewResult(2, 1))
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 				mock.ExpectExec("UPDATE packages").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec("INSERT INTO sync_state").WillReturnError(errors.New("sync state fail"))
 				mock.ExpectRollback()
@@ -164,6 +178,7 @@ func TestSyncSQLMockErrorBranches(t *testing.T) {
 				expectResetTables(mock)
 				mock.ExpectExec("INSERT INTO packages").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec("INSERT INTO files").WillReturnResult(sqlmock.NewResult(2, 1))
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 				mock.ExpectExec("UPDATE packages").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec("INSERT INTO sync_state").WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectCommit().WillReturnError(errors.New("commit fail"))

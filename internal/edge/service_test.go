@@ -254,3 +254,39 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+
+func TestListAll(t *testing.T) {
+	conn, cleanup := edgeTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+	ctx := context.Background()
+
+	// Empty result
+	edges, err := svc.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll empty: %v", err)
+	}
+	if len(edges) != 0 {
+		t.Fatalf("expected 0 edges, got %d", len(edges))
+	}
+
+	// With seeded edges
+	svc.Create(ctx, CreateInput{
+		FromType: "decision", FromID: 1,
+		ToType: "package", ToRef: "internal/cli",
+		Relation: "affects", Source: "manual", Confidence: "high",
+	})
+	svc.Create(ctx, CreateInput{
+		FromType: "pattern", FromID: 1,
+		ToType: "file", ToRef: "main.go",
+		Relation: "affects", Source: "auto", Confidence: "medium",
+	})
+
+	edges, err = svc.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d", len(edges))
+	}
+}

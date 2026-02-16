@@ -3,10 +3,70 @@ package recall
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"strings"
 	"testing"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/robertguss/recon/internal/db"
 )
+
+func TestRecall_SQLMock_ErrorPaths(t *testing.T) {
+	t.Run("query error surfaces from Recall", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New: %v", err)
+		}
+		defer mockDB.Close()
+
+		// FTS query fails
+		mock.ExpectQuery("search_index.entity_type").WithArgs("Cobra", 10).
+			WillReturnError(errors.New("fts fail"))
+		// LIKE fallback also fails
+		mock.ExpectQuery("SELECT 'decision'").WithArgs("%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", 10).
+			WillReturnError(errors.New("like fail"))
+
+		svc := NewService(mockDB)
+		_, err = svc.Recall(context.Background(), "Cobra", RecallOptions{})
+		if err == nil {
+			t.Fatal("expected error from Recall when both FTS and LIKE fail")
+		}
+		if !strings.Contains(err.Error(), "fallback recall query") {
+			t.Fatalf("expected fallback recall query error, got: %v", err)
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expectations: %v", err)
+		}
+	})
+
+	t.Run("scan error from malformed rows", func(t *testing.T) {
+		mockDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New: %v", err)
+		}
+		defer mockDB.Close()
+
+		// Return rows with wrong column types to trigger scan error
+		mock.ExpectQuery("search_index.entity_type").WithArgs("Cobra", 10).WillReturnRows(
+			sqlmock.NewRows([]string{"entity_type", "entity_id", "title", "reasoning", "confidence", "updated_at", "summary", "drift_status"}).
+				AddRow("decision", "not_an_int", "t", "r", "high", "u", "s", "ok"),
+		)
+		// LIKE fallback also fails
+		mock.ExpectQuery("SELECT 'decision'").WithArgs("%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", "%Cobra%", 10).
+			WillReturnError(errors.New("like fail"))
+
+		svc := NewService(mockDB)
+		_, err = svc.Recall(context.Background(), "Cobra", RecallOptions{})
+		if err == nil {
+			t.Fatal("expected error from Recall when scan fails")
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("expectations: %v", err)
+		}
+	})
+}
 
 func recallTestDB(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
@@ -91,6 +151,28 @@ func TestRecallFindsDecisionByRelatedTerms(t *testing.T) {
 	}
 	if len(result.Items) == 0 {
 		t.Fatal("expected recall to find pattern via 'error wrapping'")
+	}
+}
+
+func TestRecall_ReasoningAndEvidenceSummarySeparate(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	svc := NewService(conn)
+	res, err := svc.Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(res.Items) == 0 {
+		t.Fatal("expected recall results")
+	}
+	item := res.Items[0]
+	// Reasoning should be ONLY the reasoning text, not contain evidence summary
+	if item.Reasoning != "Because subcommands" {
+		t.Fatalf("expected reasoning='Because subcommands', got %q", item.Reasoning)
+	}
+	if item.EvidenceSummary != "cobra in go.mod" {
+		t.Fatalf("expected evidence_summary='cobra in go.mod', got %q", item.EvidenceSummary)
 	}
 }
 

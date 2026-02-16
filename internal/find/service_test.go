@@ -481,3 +481,19 @@ func TestErrorStrings(t *testing.T) {
 	}
 	_ = os.ErrNotExist
 }
+
+func TestBuildListWhereShortPackageName(t *testing.T) {
+	where, args := buildListWhere(QueryOptions{PackagePath: "cli"})
+	if !strings.Contains(where, "LIKE") {
+		t.Fatalf("expected LIKE clause for short package name, got %q", where)
+	}
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args for short package name, got %d", len(args))
+	}
+	if args[0] != "cli" {
+		t.Fatalf("expected first arg 'cli', got %v", args[0])
+	}
+	if args[1] != "%/cli" {
+		t.Fatalf("expected second arg '%%/cli', got %v", args[1])
+	}
+}

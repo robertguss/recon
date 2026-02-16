@@ -84,6 +84,134 @@ func Helper() string { return "ok" }
 	}
 }
 
+func TestSync_DeterministicSymbolCount(t *testing.T) {
+	root := t.TempDir()
+	mustWrite := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	mustWrite("go.mod", "module example.com/recon\n")
+	mustWrite("main.go", `package main
+import "example.com/recon/sub"
+func Alpha() { sub.Helper() }
+func main() {}
+`)
+	mustWrite("sub/sub.go", `package sub
+func Helper() string { return "ok" }
+`)
+
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	svc := NewService(conn)
+
+	// First sync
+	result1, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify IndexedSymbols matches actual DB count
+	var dbCount int
+	if err := conn.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&dbCount); err != nil {
+		t.Fatalf("count symbols: %v", err)
+	}
+	if result1.IndexedSymbols != dbCount {
+		t.Fatalf("first sync: IndexedSymbols=%d but DB count=%d", result1.IndexedSymbols, dbCount)
+	}
+
+	// Second sync with no changes
+	result2, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result1.IndexedSymbols != result2.IndexedSymbols {
+		t.Fatalf("symbol count changed between syncs: %d -> %d",
+			result1.IndexedSymbols, result2.IndexedSymbols)
+	}
+
+	// Also verify status count matches
+	var statusCount int
+	conn.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&statusCount)
+	if statusCount != result2.IndexedSymbols {
+		t.Fatalf("status count %d != sync count %d", statusCount, result2.IndexedSymbols)
+	}
+}
+
+func TestSync_DeterministicWithDuplicateSymbolNames(t *testing.T) {
+	root := t.TempDir()
+	mustWrite := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	// Multiple init() functions in same file — common Go pattern
+	mustWrite("go.mod", "module example.com/test\n")
+	mustWrite("main.go", `package main
+func init() { println("first") }
+func init() { println("second") }
+func init() { println("third") }
+func main() {}
+`)
+
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	svc := NewService(conn)
+
+	result1, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify IndexedSymbols matches actual DB count
+	var dbCount int
+	conn.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&dbCount)
+	if result1.IndexedSymbols != dbCount {
+		t.Fatalf("IndexedSymbols=%d but DB count=%d (duplicate init() functions cause mismatch)",
+			result1.IndexedSymbols, dbCount)
+	}
+
+	// Second sync
+	result2, err := svc.Sync(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result1.IndexedSymbols != result2.IndexedSymbols {
+		t.Fatalf("symbol count changed: %d -> %d", result1.IndexedSymbols, result2.IndexedSymbols)
+	}
+}
+
 func TestSyncErrors(t *testing.T) {
 	if _, err := NewService(nil).Sync(context.Background(), t.TempDir()); err == nil {
 		t.Fatal("expected module path error with missing go.mod")

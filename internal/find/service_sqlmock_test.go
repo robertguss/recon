@@ -209,3 +209,33 @@ func TestListPackagesRowsError(t *testing.T) {
 		t.Fatalf("expected iterate error, got %v", err)
 	}
 }
+
+func TestSuggestionsPass2SubstringFallback(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	svc := NewService(db)
+
+	// Pass 1: prefix returns empty
+	mock.ExpectQuery("SELECT DISTINCT name").WithArgs("XYZ%").WillReturnRows(
+		sqlmock.NewRows([]string{"name"}),
+	)
+	// Pass 2: substring returns results
+	mock.ExpectQuery("SELECT DISTINCT name").WithArgs("%XYZ%").WillReturnRows(
+		sqlmock.NewRows([]string{"name"}).AddRow("aXYZb"),
+	)
+
+	suggestions, err := svc.suggestions(context.Background(), "XYZ")
+	if err != nil {
+		t.Fatalf("suggestions: %v", err)
+	}
+	if len(suggestions) != 1 || suggestions[0] != "aXYZb" {
+		t.Fatalf("expected [aXYZb], got %v", suggestions)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

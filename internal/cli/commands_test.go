@@ -1152,7 +1152,7 @@ func TestPatternCommand(t *testing.T) {
 	// Promoted pattern (JSON)
 	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Error wrapping",
-		"--description", "Use %w wrapping",
+		"--reasoning", "Use %w wrapping",
 		"--evidence-summary", "grep finds %w",
 		"--check-type", "grep_pattern",
 		"--check-pattern", "Errorf",
@@ -1165,7 +1165,7 @@ func TestPatternCommand(t *testing.T) {
 	// Pattern text output
 	out, _, err = runCommandWithCapture(t, newPatternCommand(app), []string{
 		"Another pattern",
-		"--description", "desc",
+		"--reasoning", "desc",
 		"--evidence-summary", "go.mod exists",
 		"--check-type", "file_exists",
 		"--check-path", "go.mod",

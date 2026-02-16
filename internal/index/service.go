@@ -112,8 +112,6 @@ func (s *Service) Sync(ctx context.Context, moduleRoot string) (SyncResult, erro
 		LineCount int
 	}
 	packageStats := map[string]*pkgStats{}
-	symbolCount := 0
-
 	for _, file := range files {
 		fset := token.NewFileSet()
 		parsed, err := parser.ParseFile(fset, file.AbsPath, file.Content, parser.ParseComments)
@@ -231,7 +229,6 @@ SELECT id FROM symbols WHERE file_id = ? AND kind = ? AND name = ? AND receiver 
 `, fileID, rec.Kind, rec.Name, rec.Receiver).Scan(&symbolID); err != nil {
 					return SyncResult{}, fmt.Errorf("resolve symbol id for %s: %w", rec.Name, err)
 				}
-				symbolCount++
 
 				for _, dep := range rec.DepRefs {
 					if _, err := tx.ExecContext(ctx, `
@@ -243,6 +240,12 @@ VALUES (?, ?, ?, ?);
 				}
 			}
 		}
+	}
+
+	// Query actual symbol count from DB (loop counter may overcount due to ON CONFLICT)
+	var actualSymbolCount int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM symbols").Scan(&actualSymbolCount); err != nil {
+		return SyncResult{}, fmt.Errorf("count symbols: %w", err)
 	}
 
 	for pkgPath, stats := range packageStats {
@@ -293,7 +296,7 @@ WHERE path = ?;
 			FilesRemoved:   removed,
 			FilesModified:  modified,
 			SymbolsBefore:  prevSymbols,
-			SymbolsAfter:   symbolCount,
+			SymbolsAfter:   actualSymbolCount,
 			PackagesBefore: prevPackages,
 			PackagesAfter:  len(packageStats),
 		}
@@ -305,7 +308,7 @@ WHERE path = ?;
 
 	return SyncResult{
 		IndexedFiles:    len(files),
-		IndexedSymbols:  symbolCount,
+		IndexedSymbols:  actualSymbolCount,
 		IndexedPackages: len(packageStats),
 		Fingerprint:     fingerprint,
 		Commit:          commit,

@@ -11,7 +11,7 @@ import (
 
 func newPatternCommand(app *App) *cobra.Command {
 	var (
-		description     string
+		reasoning       string
 		example         string
 		confidence      string
 		evidenceSummary string
@@ -127,7 +127,7 @@ func newPatternCommand(app *App) *cobra.Command {
 
 			result, err := pattern.NewService(conn).ProposeAndVerifyPattern(cmd.Context(), pattern.ProposePatternInput{
 				Title:           title,
-				Description:     description,
+				Description:     reasoning,
 				Example:         example,
 				Confidence:      confidence,
 				EvidenceSummary: evidenceSummary,
@@ -143,22 +143,11 @@ func newPatternCommand(app *App) *cobra.Command {
 				return err
 			}
 
-			if jsonOut {
-				if !result.VerificationPassed {
-					details := map[string]any{
-						"proposal_id": result.ProposalID,
-						"check_type":  checkType,
-					}
-					_ = writeJSONError("verification_failed", result.VerificationDetails, details)
-					return ExitError{Code: 2}
-				}
-				return writeJSON(result)
-			}
-
-			// Create edges after successful promotion
+			// Create edges after successful promotion (both JSON and text paths)
 			if result.Promoted {
 				edgeSvc := edge.NewService(conn)
 				// Manual edges from --affects flag
+				var edgeErrors []string
 				for _, ref := range affectsRefs {
 					refType := inferRefType(ref)
 					_, err := edgeSvc.Create(cmd.Context(), edge.CreateInput{
@@ -170,13 +159,25 @@ func newPatternCommand(app *App) *cobra.Command {
 						Source:     "manual",
 						Confidence: "high",
 					})
-					if err != nil && !jsonOut {
-						fmt.Printf("  edge warning: %v\n", err)
+					if err != nil {
+						if jsonOut {
+							edgeErrors = append(edgeErrors, fmt.Sprintf("ref=%s: %v", ref, err))
+						} else {
+							fmt.Printf("  edge warning: %v\n", err)
+						}
 					}
 				}
-				// Auto-link from title + description
+				if jsonOut && len(edgeErrors) > 0 {
+					details := map[string]any{
+						"pattern_id": result.PatternID,
+						"errors":     edgeErrors,
+					}
+					_ = writeJSONError("edge_creation_failed", "one or more edges could not be created", details)
+					return ExitError{Code: 2}
+				}
+				// Auto-link from title + reasoning
 				linker := edge.NewAutoLinker(conn)
-				detected := linker.Detect(cmd.Context(), "pattern", result.PatternID, title, description)
+				detected := linker.Detect(cmd.Context(), "pattern", result.PatternID, title, reasoning)
 				for _, d := range detected {
 					edgeSvc.Create(cmd.Context(), edge.CreateInput{
 						FromType: "pattern", FromID: result.PatternID,
@@ -184,6 +185,18 @@ func newPatternCommand(app *App) *cobra.Command {
 						Source: "auto", Confidence: "medium",
 					})
 				}
+			}
+
+			if jsonOut {
+				if !result.VerificationPassed {
+					details := map[string]any{
+						"proposal_id": result.ProposalID,
+						"check_type":  checkType,
+					}
+					_ = writeJSONError("verification_failed", result.VerificationDetails, details)
+					return ExitError{Code: 2}
+				}
+				return writeJSON(result)
 			}
 
 			if result.Promoted {
@@ -199,7 +212,7 @@ func newPatternCommand(app *App) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&description, "description", "", "Pattern description")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "Pattern reasoning")
 	cmd.Flags().StringVar(&example, "example", "", "Code example demonstrating the pattern")
 	cmd.Flags().StringVar(&confidence, "confidence", "medium", "Confidence: low, medium, high")
 	cmd.Flags().StringVar(&evidenceSummary, "evidence-summary", "", "Evidence summary")

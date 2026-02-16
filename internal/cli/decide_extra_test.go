@@ -251,3 +251,25 @@ func TestFindDefaultErrorTextBranch(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+func TestInferRefType(t *testing.T) {
+	tests := []struct {
+		ref  string
+		want string
+	}{
+		{"main.go", "file"},
+		{"internal/cli/exit_error.go", "file"},
+		{"Service.Run", "symbol"},
+		{"internal/cli", "package"},
+		{"SomeFunc", "package"},
+		{"cmd/recon", "package"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			got := inferRefType(tt.ref)
+			if got != tt.want {
+				t.Fatalf("inferRefType(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
