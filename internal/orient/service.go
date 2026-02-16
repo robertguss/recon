@@ -70,10 +70,11 @@ type Summary struct {
 }
 
 type ModuleKnowledge struct {
-	ID         int64  `json:"id"`
-	Type       string `json:"type"`
-	Title      string `json:"title"`
-	Confidence string `json:"confidence"`
+	ID             int64  `json:"id"`
+	Type           string `json:"type"`
+	Title          string `json:"title"`
+	Confidence     string `json:"confidence"`
+	EdgeConfidence string `json:"edge_confidence"`
 }
 
 type ModuleSummary struct {
@@ -312,7 +313,8 @@ func (s *Service) loadModuleEdges(ctx context.Context, payload *Payload) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT e.to_ref, e.from_type, e.from_id,
        COALESCE(d.title, p.title, '') AS title,
-       COALESCE(d.confidence, p.confidence, 'medium') AS confidence
+       COALESCE(d.confidence, p.confidence, 'medium') AS confidence,
+       COALESCE(e.confidence, 'medium') AS edge_confidence
 FROM edges e
 LEFT JOIN decisions d ON e.from_type = 'decision' AND e.from_id = d.id AND d.status = 'active'
 LEFT JOIN patterns p ON e.from_type = 'pattern' AND e.from_id = p.id AND p.status = 'active'
@@ -329,12 +331,12 @@ ORDER BY e.to_ref, e.from_type, confidence DESC;
 	for rows.Next() {
 		var pkgPath, fromType string
 		var fromID int64
-		var title, confidence string
-		if err := rows.Scan(&pkgPath, &fromType, &fromID, &title, &confidence); err != nil {
+		var title, confidence, edgeConfidence string
+		if err := rows.Scan(&pkgPath, &fromType, &fromID, &title, &confidence, &edgeConfidence); err != nil {
 			continue
 		}
 		moduleKnowledge[pkgPath] = append(moduleKnowledge[pkgPath], ModuleKnowledge{
-			ID: fromID, Type: fromType, Title: title, Confidence: confidence,
+			ID: fromID, Type: fromType, Title: title, Confidence: confidence, EdgeConfidence: edgeConfidence,
 		})
 	}
 

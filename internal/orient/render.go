@@ -78,7 +78,11 @@ func RenderText(payload Payload) string {
 		for _, m := range payload.Modules {
 			fmt.Fprintf(&b, "- %s (%s): %d files, %d lines [%s]\n", m.Path, m.Name, m.FileCount, m.LineCount, strings.ToUpper(m.Heat))
 			for _, k := range m.Knowledge {
-				fmt.Fprintf(&b, "    %s #%d: %s [%s]\n", k.Type, k.ID, k.Title, k.Confidence)
+				conf := k.Confidence
+				if k.EdgeConfidence != "" && k.EdgeConfidence != k.Confidence {
+					conf = k.Confidence + ", edge=" + k.EdgeConfidence
+				}
+				fmt.Fprintf(&b, "    %s #%d: %s [%s]\n", k.Type, k.ID, k.Title, conf)
 			}
 		}
 	}

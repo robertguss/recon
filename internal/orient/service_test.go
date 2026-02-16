@@ -649,8 +649,15 @@ func TestBuild_ModulesIncludeEdges(t *testing.T) {
 			if len(m.Knowledge) == 0 {
 				t.Fatal("expected knowledge entries for internal/cli module")
 			}
-			if m.Knowledge[0].Type != "decision" || m.Knowledge[0].ID != 1 || m.Knowledge[0].Title != "ExitError convention" {
-				t.Fatalf("unexpected knowledge: %+v", m.Knowledge[0])
+			k := m.Knowledge[0]
+			if k.Type != "decision" || k.ID != 1 || k.Title != "ExitError convention" {
+				t.Fatalf("unexpected knowledge: %+v", k)
+			}
+			if k.Confidence != "high" {
+				t.Fatalf("expected decision confidence 'high', got %q", k.Confidence)
+			}
+			if k.EdgeConfidence != "high" {
+				t.Fatalf("expected edge confidence 'high', got %q", k.EdgeConfidence)
 			}
 			found = true
 		}
