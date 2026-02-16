@@ -147,3 +147,29 @@ func TestAutoLink_SkipsShortSymbolNames(t *testing.T) {
 		}
 	}
 }
+
+func TestContainsWord_EdgeCases(t *testing.T) {
+	tests := []struct {
+		text string
+		word string
+		want bool
+	}{
+		{"ExitError is used", "ExitError", true},  // word at start
+		{"uses ExitError", "ExitError", true},     // word at end
+		{"the ExitError type", "ExitError", true}, // word in middle
+		{"NotExitError", "ExitError", false},      // prefix of longer word
+		{"ExitErrorHandler", "ExitError", false},  // suffix into longer word
+		{"foo.ExitError.bar", "ExitError", true},  // bounded by dots
+		{"(ExitError)", "ExitError", true},        // bounded by parens
+		{"", "ExitError", false},                  // empty text
+		{"ExitError", "ExitError", true},          // exact match
+	}
+	for _, tt := range tests {
+		t.Run(tt.text+"_"+tt.word, func(t *testing.T) {
+			got := containsWord(tt.text, tt.word)
+			if got != tt.want {
+				t.Fatalf("containsWord(%q, %q) = %v, want %v", tt.text, tt.word, got, tt.want)
+			}
+		})
+	}
+}

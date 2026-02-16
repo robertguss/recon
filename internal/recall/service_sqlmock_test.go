@@ -83,3 +83,25 @@ func TestIsMissingTableError(t *testing.T) {
 		t.Fatal("expected case-insensitive table detection")
 	}
 }
+
+func TestEnrichWithEdgesQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	// The enrichWithEdges method silently continues on error.
+	// We verify it doesn't crash and items remain unchanged.
+	mock.ExpectQuery("SELECT to_type").WillReturnError(errors.New("edges query fail"))
+
+	svc := NewService(db)
+	items := []Item{
+		{DecisionID: 1, EntityType: "decision", Title: "test"},
+	}
+	svc.enrichWithEdges(context.Background(), items)
+
+	if len(items[0].ConnectedEdges) != 0 {
+		t.Fatalf("expected no edges on error, got %d", len(items[0].ConnectedEdges))
+	}
+}

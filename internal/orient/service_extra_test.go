@@ -203,3 +203,59 @@ func TestBuildErrorBranchesForModulesDecisionsAndSyncState(t *testing.T) {
 		t.Fatalf("expected sync state parse error, got %v", err)
 	}
 }
+
+func TestLoadModuleEdgesNoEdgesTable(t *testing.T) {
+	conn, err := db.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer conn.Close()
+	svc := NewService(conn)
+	payload := &Payload{
+		Modules: []ModuleSummary{{Path: "internal/cli", Name: "cli"}},
+	}
+
+	// No edges table - should silently return without error
+	svc.loadModuleEdges(context.Background(), payload)
+
+	if len(payload.Modules[0].Knowledge) != 0 {
+		t.Fatalf("expected no knowledge when edges table missing, got %d", len(payload.Modules[0].Knowledge))
+	}
+}
+
+func TestLoadModuleEdgesTruncation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recon\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	conn, err := db.Open(filepath.Join(root, "x.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer conn.Close()
+
+	// Create necessary tables
+	_, _ = conn.Exec(`CREATE TABLE packages (id INTEGER PRIMARY KEY, path TEXT, name TEXT, file_count INTEGER, line_count INTEGER)`)
+	_, _ = conn.Exec(`CREATE TABLE decisions (id INTEGER, title TEXT, reasoning TEXT, confidence TEXT, status TEXT, created_at TEXT, updated_at TEXT)`)
+	_, _ = conn.Exec(`CREATE TABLE patterns (id INTEGER, title TEXT, description TEXT, confidence TEXT, status TEXT, created_at TEXT, updated_at TEXT)`)
+	_, _ = conn.Exec(`CREATE TABLE evidence (entity_type TEXT, entity_id INTEGER, drift_status TEXT)`)
+	_, _ = conn.Exec(`CREATE TABLE edges (id INTEGER PRIMARY KEY, from_type TEXT, from_id INTEGER, to_type TEXT, to_ref TEXT, relation TEXT, source TEXT, confidence TEXT, created_at TEXT, UNIQUE(from_type, from_id, to_type, to_ref, relation))`)
+
+	_, _ = conn.Exec(`INSERT INTO packages(id, path, name, file_count, line_count) VALUES (1, 'internal/cli', 'cli', 5, 500)`)
+
+	// Insert 7 decisions all pointing at same package
+	for i := 1; i <= 7; i++ {
+		_, _ = conn.Exec(`INSERT INTO decisions(id,title,reasoning,confidence,status,created_at,updated_at) VALUES (?,'Decision','r','high','active','2026-01-01','2026-01-01')`, i)
+		_, _ = conn.Exec(`INSERT INTO edges(from_type,from_id,to_type,to_ref,relation,source,confidence,created_at) VALUES ('decision',?,'package','internal/cli','affects','manual','high','2026-01-01')`, i)
+	}
+
+	svc := NewService(conn)
+	payload := &Payload{
+		Modules: []ModuleSummary{{Path: "internal/cli", Name: "cli"}},
+	}
+	svc.loadModuleEdges(context.Background(), payload)
+
+	if len(payload.Modules[0].Knowledge) != 5 {
+		t.Fatalf("expected knowledge truncated to 5, got %d", len(payload.Modules[0].Knowledge))
+	}
+}

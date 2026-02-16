@@ -996,6 +996,261 @@ func TestM4FindMissingArgJSONMode(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// version.go coverage tests
+// ---------------------------------------------------------------------------
+
+func TestM4VersionText(t *testing.T) {
+	out, _, err := runCommandWithCapture(t, newVersionCommand(), nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(out, "recon") {
+		t.Fatalf("expected 'recon' in version output, got %q", out)
+	}
+}
+
+func TestM4VersionJSON(t *testing.T) {
+	out, _, err := runCommandWithCapture(t, newVersionCommand(), []string{"--json"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(out, `"version"`) {
+		t.Fatalf("expected version key in JSON, got %q", out)
+	}
+	if !strings.Contains(out, `"go_version"`) {
+		t.Fatalf("expected go_version key in JSON, got %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pattern.go list/delete coverage tests
+// ---------------------------------------------------------------------------
+
+func TestM4PatternListTextWithItems(t *testing.T) {
+	_, app := m4Setup(t)
+	// Create a promoted pattern first
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"List pattern title",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil {
+		t.Fatalf("create pattern: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("expected list success, got %v", err)
+	}
+	if !strings.Contains(out, "List pattern title") {
+		t.Fatalf("expected pattern title in list, out=%q", out)
+	}
+	if !strings.Contains(out, "#") {
+		t.Fatalf("expected # prefix in list, out=%q", out)
+	}
+}
+
+func TestM4PatternListTextEmpty(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("expected list success, got %v", err)
+	}
+	if !strings.Contains(out, "No active patterns.") {
+		t.Fatalf("expected empty list message, out=%q", out)
+	}
+}
+
+func TestM4PatternListJSONWithItems(t *testing.T) {
+	_, app := m4Setup(t)
+	// Create a promoted pattern first
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"JSON list pattern",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil {
+		t.Fatalf("create pattern: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list", "--json"})
+	if err != nil {
+		t.Fatalf("expected list success, got %v", err)
+	}
+	if !strings.Contains(out, "[") {
+		t.Fatalf("expected JSON array, out=%q", out)
+	}
+}
+
+func TestM4PatternListJSONInternalError(t *testing.T) {
+	_, app := m4SetupBrokenDB(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list", "--json"})
+	if err == nil {
+		t.Fatal("expected error for broken db")
+	}
+	if !strings.Contains(out, `"code"`) {
+		t.Fatalf("expected JSON error envelope, out=%q", out)
+	}
+}
+
+func TestM4PatternListTextInternalError(t *testing.T) {
+	_, app := m4SetupBrokenDB(t)
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list"})
+	if err == nil {
+		t.Fatal("expected error for broken db")
+	}
+}
+
+func TestM4PatternDeleteTextSuccess(t *testing.T) {
+	_, app := m4Setup(t)
+	// Create a promoted pattern first
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Delete me pattern",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil {
+		t.Fatalf("create pattern: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "1"})
+	if err != nil {
+		t.Fatalf("expected delete success, got %v", err)
+	}
+	if !strings.Contains(out, "Pattern 1 archived.") {
+		t.Fatalf("expected archived message, out=%q", out)
+	}
+}
+
+func TestM4PatternDeleteJSONSuccess(t *testing.T) {
+	_, app := m4Setup(t)
+	// Create a promoted pattern first
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Delete me json pattern",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	})
+	if err != nil {
+		t.Fatalf("create pattern: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "1", "--json"})
+	if err != nil {
+		t.Fatalf("expected delete success, got %v", err)
+	}
+	if !strings.Contains(out, `"archived"`) {
+		t.Fatalf("expected archived JSON, out=%q", out)
+	}
+}
+
+func TestM4PatternDeleteTextNotFound(t *testing.T) {
+	_, app := m4Setup(t)
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "999"})
+	if err == nil {
+		t.Fatal("expected error for deleting non-existent pattern")
+	}
+}
+
+func TestM4PatternDeleteJSONNotFound(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "999", "--json"})
+	if err == nil {
+		t.Fatal("expected error for deleting non-existent pattern")
+	}
+	if !strings.Contains(out, `"code": "not_found"`) {
+		t.Fatalf("expected not_found envelope, out=%q", out)
+	}
+}
+
+func TestM4PatternDeleteNoDBText(t *testing.T) {
+	_, app := m4SetupNoInit(t)
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "1"})
+	if err == nil {
+		t.Fatal("expected error for missing db")
+	}
+	if !strings.Contains(err.Error(), "run `recon init` first") {
+		t.Fatalf("expected init error, got %v", err)
+	}
+}
+
+func TestM4PatternDeleteNoDBJSON(t *testing.T) {
+	_, app := m4SetupNoInit(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--delete", "1", "--json"})
+	if err == nil {
+		t.Fatal("expected error for missing db")
+	}
+	if !strings.Contains(out, `"code": "not_initialized"`) {
+		t.Fatalf("expected not_initialized envelope, out=%q", out)
+	}
+}
+
+func TestM4PatternListNoDBText(t *testing.T) {
+	_, app := m4SetupNoInit(t)
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list"})
+	if err == nil {
+		t.Fatal("expected error for missing db")
+	}
+	if !strings.Contains(err.Error(), "run `recon init` first") {
+		t.Fatalf("expected init error, got %v", err)
+	}
+}
+
+func TestM4PatternListNoDBJSON(t *testing.T) {
+	_, app := m4SetupNoInit(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{"--list", "--json"})
+	if err == nil {
+		t.Fatal("expected error for missing db")
+	}
+	if !strings.Contains(out, `"code": "not_initialized"`) {
+		t.Fatalf("expected not_initialized envelope, out=%q", out)
+	}
+}
+
+func TestM4PatternPromotedWithAffects(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Affects pattern",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+		"--affects", "internal/cli",
+	})
+	if err != nil {
+		t.Fatalf("expected promoted success, got %v", err)
+	}
+	if !strings.Contains(out, "Pattern promoted") {
+		t.Fatalf("expected 'Pattern promoted', out=%q", out)
+	}
+}
+
+func TestM4PatternJSONPromotedOutput(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"JSON promoted pattern",
+		"--reasoning", "desc",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("expected promoted success, got %v", err)
+	}
+	if !strings.Contains(out, `"pattern_id"`) {
+		t.Fatalf("expected pattern_id in JSON output, out=%q", out)
+	}
+}
+
 func TestM4FindJSONIncludesKnowledgeEdges(t *testing.T) {
 	_, app := m4Setup(t)
 
