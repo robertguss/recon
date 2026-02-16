@@ -298,10 +298,10 @@ func TestMigration003PatternsTable(t *testing.T) {
 		t.Fatalf("patterns table should exist: %v", err)
 	}
 
-	// Verify pattern_files table exists
-	_, err = conn.Exec(`INSERT INTO pattern_files (pattern_id, file_path) VALUES (1, 'main.go')`)
+	// Verify edges table exists (migration 004 migrated pattern_files into edges)
+	_, err = conn.Exec(`INSERT INTO edges (from_type, from_id, to_type, to_ref, relation, source, confidence, created_at) VALUES ('pattern', 1, 'file', 'main.go', 'affects', 'auto', 'medium', 'x')`)
 	if err != nil {
-		t.Fatalf("pattern_files table should exist: %v", err)
+		t.Fatalf("edges table should exist: %v", err)
 	}
 }
 
