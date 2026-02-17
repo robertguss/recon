@@ -3,3 +3,4 @@ coverage.out
 recon.worktrees/
 .worktrees/
 recon
+cover.out
