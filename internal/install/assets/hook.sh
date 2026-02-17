@@ -14,4 +14,4 @@ echo ""
 echo "The following is live code intelligence data for this repository."
 echo "Use it to understand the project structure, recent activity, and existing decisions."
 echo ""
-recon orient --json
+recon orient --json --auto-sync
