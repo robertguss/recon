@@ -60,7 +60,7 @@ func TestLoadPatternsErrorBranches(t *testing.T) {
 	}
 
 	// Patterns table with columns that exist but produce wrong types for scan
-	_, _ = conn.Exec(`CREATE TABLE patterns (id INTEGER, title TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
+	_, _ = conn.Exec(`CREATE TABLE patterns (id INTEGER, title TEXT, description TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
 	_, _ = conn.Exec(`CREATE TABLE evidence (entity_type TEXT, entity_id INTEGER, drift_status TEXT);`)
 	// Insert a row with NULL values in required scan fields to trigger scan error
 	_, _ = conn.Exec(`INSERT INTO patterns(id, status) VALUES (1, 'active');`)
@@ -128,7 +128,7 @@ func TestBuildLoadArchitectureError(t *testing.T) {
 	// Create tables so summary, modules, decisions, patterns all succeed
 	_, _ = conn.Exec(`CREATE TABLE files (id INTEGER, path TEXT, package_id INTEGER);`)
 	_, _ = conn.Exec(`CREATE TABLE symbols (id INTEGER);`)
-	_, _ = conn.Exec(`CREATE TABLE decisions (id INTEGER, title TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
+	_, _ = conn.Exec(`CREATE TABLE decisions (id INTEGER, title TEXT, reasoning TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
 	_, _ = conn.Exec(`CREATE TABLE packages (id INTEGER PRIMARY KEY, path TEXT, name TEXT, file_count INTEGER, line_count INTEGER);`)
 	_, _ = conn.Exec(`CREATE TABLE patterns (id INTEGER, title TEXT, description TEXT, confidence TEXT, status TEXT, updated_at TEXT, created_at TEXT);`)
 	_, _ = conn.Exec(`CREATE TABLE evidence (entity_type TEXT, entity_id INTEGER, drift_status TEXT);`)
@@ -190,7 +190,7 @@ func TestBuildErrorBranchesForModulesDecisionsAndSyncState(t *testing.T) {
 
 	// Fix decisions query, break LoadSyncState parse.
 	_, _ = conn.Exec(`DROP TABLE decisions;`)
-	_, _ = conn.Exec(`CREATE TABLE decisions (id INTEGER, title TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
+	_, _ = conn.Exec(`CREATE TABLE decisions (id INTEGER, title TEXT, reasoning TEXT, confidence TEXT, updated_at TEXT, status TEXT);`)
 	_, _ = conn.Exec(`CREATE TABLE evidence (entity_type TEXT, entity_id INTEGER, drift_status TEXT);`)
 	// Recreate files with proper columns so loadArchitecture succeeds
 	_, _ = conn.Exec(`DROP TABLE files;`)

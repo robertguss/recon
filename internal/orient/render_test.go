@@ -91,6 +91,39 @@ func TestRenderTextDependencyFlowTruncation(t *testing.T) {
 	}
 }
 
+func TestRenderTextDecisionReasoning(t *testing.T) {
+	payload := Payload{
+		Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"},
+		ActiveDecisions: []DecisionDigest{
+			{ID: 1, Title: "Use Cobra for CLI", Confidence: "high", Drift: "ok", UpdatedAt: "now", Reasoning: "standard Go CLI framework with broad ecosystem support"},
+		},
+		ActivePatterns: []PatternDigest{
+			{ID: 1, Title: "Function-var injection", Confidence: "medium", Drift: "ok", UpdatedAt: "now", Reasoning: "override package-level vars in tests for isolation"},
+		},
+	}
+	got := RenderText(payload)
+	if !strings.Contains(got, "standard Go CLI framework") {
+		t.Fatalf("expected decision reasoning in output: %s", got)
+	}
+	if !strings.Contains(got, "override package-level vars") {
+		t.Fatalf("expected pattern reasoning in output: %s", got)
+	}
+}
+
+func TestRenderTextDecisionWithoutReasoning(t *testing.T) {
+	payload := Payload{
+		Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"},
+		ActiveDecisions: []DecisionDigest{
+			{ID: 1, Title: "No reasoning here", Confidence: "high", Drift: "ok", UpdatedAt: "now"},
+		},
+	}
+	got := RenderText(payload)
+	// Should still render fine, just no reasoning line
+	if !strings.Contains(got, "No reasoning here") {
+		t.Fatalf("expected decision title in output: %s", got)
+	}
+}
+
 func TestRenderTextEmptySections(t *testing.T) {
 	got := RenderText(Payload{Project: ProjectInfo{Name: "x", ModulePath: "m", Language: "go"}})
 	if !strings.Contains(got, "- (none)") {

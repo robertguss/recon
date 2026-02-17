@@ -90,6 +90,7 @@ type ModuleSummary struct {
 type DecisionDigest struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
+	Reasoning  string `json:"reasoning,omitempty"`
 	Confidence string `json:"confidence"`
 	UpdatedAt  string `json:"updated_at"`
 	Drift      string `json:"drift_status"`
@@ -98,6 +99,7 @@ type DecisionDigest struct {
 type PatternDigest struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
+	Reasoning  string `json:"reasoning,omitempty"`
 	Confidence string `json:"confidence"`
 	UpdatedAt  string `json:"updated_at"`
 	Drift      string `json:"drift_status"`
@@ -257,7 +259,7 @@ LIMIT ?;
 
 func (s *Service) loadDecisions(ctx context.Context, limit int, payload *Payload) error {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT d.id, d.title, d.confidence, d.updated_at, COALESCE(e.drift_status, 'ok')
+SELECT d.id, d.title, COALESCE(d.reasoning, ''), d.confidence, d.updated_at, COALESCE(e.drift_status, 'ok')
 FROM decisions d
 LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
 WHERE d.status = 'active'
@@ -271,7 +273,7 @@ LIMIT ?;
 
 	for rows.Next() {
 		var d DecisionDigest
-		if err := rows.Scan(&d.ID, &d.Title, &d.Confidence, &d.UpdatedAt, &d.Drift); err != nil {
+		if err := rows.Scan(&d.ID, &d.Title, &d.Reasoning, &d.Confidence, &d.UpdatedAt, &d.Drift); err != nil {
 			return fmt.Errorf("scan decision row: %w", err)
 		}
 		payload.ActiveDecisions = append(payload.ActiveDecisions, d)
@@ -284,7 +286,7 @@ LIMIT ?;
 
 func (s *Service) loadPatterns(ctx context.Context, limit int, payload *Payload) error {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT p.id, p.title, p.confidence, p.updated_at, COALESCE(e.drift_status, 'ok')
+SELECT p.id, p.title, COALESCE(p.description, ''), p.confidence, p.updated_at, COALESCE(e.drift_status, 'ok')
 FROM patterns p
 LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
 WHERE p.status = 'active'
@@ -298,7 +300,7 @@ LIMIT ?;
 
 	for rows.Next() {
 		var p PatternDigest
-		if err := rows.Scan(&p.ID, &p.Title, &p.Confidence, &p.UpdatedAt, &p.Drift); err != nil {
+		if err := rows.Scan(&p.ID, &p.Title, &p.Reasoning, &p.Confidence, &p.UpdatedAt, &p.Drift); err != nil {
 			return fmt.Errorf("scan pattern row: %w", err)
 		}
 		payload.ActivePatterns = append(payload.ActivePatterns, p)

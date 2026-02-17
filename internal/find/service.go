@@ -184,9 +184,9 @@ func buildListWhere(opts QueryOptions) (string, []any) {
 	}
 	if opts.FilePath != "" {
 		if !strings.Contains(opts.FilePath, "/") {
-			// Filename-only: match basename using LIKE suffix
-			clauses = append(clauses, "(f.path = ? OR f.path LIKE ?)")
-			args = append(args, opts.FilePath, "%/"+opts.FilePath)
+			// Filename-only: substring match anywhere in path
+			clauses = append(clauses, "f.path LIKE ?")
+			args = append(args, "%"+opts.FilePath+"%")
 		} else {
 			clauses = append(clauses, "(f.path = ? OR f.path LIKE ?)")
 			args = append(args, opts.FilePath, "%"+opts.FilePath+"%")
@@ -360,9 +360,9 @@ func matchFilePath(symbolPath, filter string) bool {
 	if symbolPath == filter {
 		return true
 	}
-	// No slash = suffix/filename match
+	// No slash = substring match against basename
 	if !strings.Contains(filter, "/") {
-		return filepath.Base(symbolPath) == filter
+		return strings.Contains(filepath.Base(symbolPath), filter)
 	}
 	// Has slash = substring match against relative path
 	return strings.Contains(symbolPath, filter) || strings.HasSuffix(symbolPath, filter)

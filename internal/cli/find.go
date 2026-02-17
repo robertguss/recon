@@ -243,6 +243,9 @@ func runFindListMode(cmd *cobra.Command, app *App, opts find.QueryOptions, limit
 		}
 		fmt.Printf("- %s %s (%s:%d-%d) pkg=%s\n", s.Kind, label, s.FilePath, s.LineStart, s.LineEnd, s.Package)
 	}
+	if result.Total > len(result.Symbols) {
+		fmt.Printf("\nShowing %d of %d. Use --limit %d to see all.\n", len(result.Symbols), result.Total, result.Total)
+	}
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 
 type RecallOptions struct {
 	Limit int
+	Kind  string // "decision", "pattern", or "" for all
 }
 
 type ConnectedEdge struct {
@@ -56,8 +57,21 @@ func (s *Service) Recall(ctx context.Context, query string, opts RecallOptions) 
 		}
 	}
 
+	if opts.Kind != "" {
+		items = filterByKind(items, opts.Kind)
+	}
 	s.enrichWithEdges(ctx, items)
 	return Result{Query: query, Items: items}, nil
+}
+
+func filterByKind(items []Item, kind string) []Item {
+	filtered := make([]Item, 0, len(items))
+	for _, item := range items {
+		if item.EntityType == kind {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func (s *Service) enrichWithEdges(ctx context.Context, items []Item) {

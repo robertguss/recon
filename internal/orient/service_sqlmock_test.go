@@ -36,17 +36,17 @@ func TestLoadModulesAndDecisionsScanAndRowsErr(t *testing.T) {
 		t.Fatalf("expected module iter error, got %v", err)
 	}
 
-	mock.ExpectQuery("SELECT d.id, d.title, d.confidence, d.updated_at").WithArgs(2).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "title", "confidence", "updated_at", "drift_status"}).
-			AddRow("bad-id", "t", "c", "u", "ok"),
+	mock.ExpectQuery("SELECT d.id, d.title").WithArgs(2).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "reasoning", "confidence", "updated_at", "drift_status"}).
+			AddRow("bad-id", "t", "r", "c", "u", "ok"),
 	)
 	if err := svc.loadDecisions(context.Background(), 2, payload); err == nil || !strings.Contains(err.Error(), "scan decision row") {
 		t.Fatalf("expected decision scan error, got %v", err)
 	}
 
-	mock.ExpectQuery("SELECT d.id, d.title, d.confidence, d.updated_at").WithArgs(2).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "title", "confidence", "updated_at", "drift_status"}).
-			AddRow(1, "t", "c", "u", "ok").
+	mock.ExpectQuery("SELECT d.id, d.title").WithArgs(2).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "reasoning", "confidence", "updated_at", "drift_status"}).
+			AddRow(1, "t", "r", "c", "u", "ok").
 			RowError(0, errors.New("decision iter fail")),
 	)
 	if err := svc.loadDecisions(context.Background(), 2, payload); err == nil || !strings.Contains(err.Error(), "iterate decision rows") {
@@ -68,9 +68,9 @@ func TestLoadPatternsScanAndIterateErrors(t *testing.T) {
 	payload := &Payload{}
 
 	// iterate pattern rows error
-	mock.ExpectQuery("SELECT p.id, p.title, p.confidence, p.updated_at").WithArgs(5).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "title", "confidence", "updated_at", "drift"}).
-			AddRow(1, "t", "h", "2024-01-01", "ok").
+	mock.ExpectQuery("SELECT p.id, p.title").WithArgs(5).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "title", "description", "confidence", "updated_at", "drift"}).
+			AddRow(1, "t", "d", "h", "2024-01-01", "ok").
 			RowError(0, errors.New("pattern iter fail")),
 	)
 	if err := svc.loadPatterns(context.Background(), 5, payload); err == nil || !strings.Contains(err.Error(), "iterate pattern rows") {

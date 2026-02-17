@@ -43,9 +43,9 @@ references the same incorrect flags. Needs the same audit.
 
 ---
 
-## P1 — Ergonomics Issues - ✅
+## P1 — Ergonomics Issues
 
-### 3. `recon init` mutates `.claude/` directory in target repo
+### 3. `recon init` mutates `.claude/` directory in target repo - ✅
 
 Running `recon init` on cortex_code and hugo installed `.claude/hooks`,
 `.claude/skills`, and `.claude/settings.json` into those repos. This is
@@ -60,7 +60,7 @@ opt-in flag (`recon init --with-claude`).
 
 **Workaround:** Manually delete `.claude/` artifacts after init.
 
-### 4. `find --file` requires exact filename, not substring
+### 4. `find --file` requires exact filename, not substring - ✅
 
 `recon find --file template` returns 0 results on hugo, but
 `recon find --file template.go` returns 76 symbols. The flag matches the exact
@@ -73,7 +73,7 @@ filename, not a substring or glob of the path.
 **Alternative:** If exact match is intentional, document it clearly and consider
 adding `--file-pattern` or glob support.
 
-### 5. `find` output lacks code context
+### 5. `find` output lacks code context - ✅
 
 `recon find` shows package, name, kind, file, and line number but no code
 snippet or function signature. Compare to `rg` which shows surrounding lines.
@@ -119,7 +119,7 @@ Same applies to `pattern --delete`.
 
 ## P2 — Missing Features
 
-### 8. `recall` has no type filtering
+### 8. `recall` has no type filtering - ✅
 
 There's no way to filter recall results by entity type (decisions vs patterns).
 If you have 50 decisions and 20 patterns, `recon recall "service"` returns a
@@ -175,7 +175,7 @@ losing the original ID and breaking any edges that reference it.
 **Suggestion:** `recon decide --update 1 --reasoning "Updated reasoning"` that
 preserves the ID and edges.
 
-### 13. `orient` text output doesn't show decision reasoning
+### 13. `orient` text output doesn't show decision reasoning - ✅
 
 The text-mode orient output shows decision titles and confidence but not the
 reasoning or evidence summary. An LLM getting this at session start wants to
@@ -198,7 +198,7 @@ internal/find" would help new users.
 near-misses (e.g., when a symbol isn't found exactly). The ambiguous case could
 benefit from similar guidance.
 
-### 15. `find --kind func` shows limited results by default
+### 15. `find --kind func` shows limited results by default - ✅
 
 On hugo, `find --kind func` found 1,464 functions but only displayed 50. The
 default limit is reasonable, but there's no obvious way to paginate or increase

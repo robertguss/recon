@@ -248,6 +248,51 @@ func TestRecall_IncludesConnectedEdges(t *testing.T) {
 	}
 }
 
+func TestRecallWithKindFilter(t *testing.T) {
+	conn, cleanup := recallTestDB(t)
+	defer cleanup()
+
+	// Add a pattern so we have both entity types
+	_, _ = conn.Exec(`INSERT INTO patterns(id,title,description,confidence,status,created_at,updated_at) VALUES (1,'Cobra pattern','Use cobra for CLI','high','active','x','2026-01-01T00:00:00Z');`)
+	_, _ = conn.Exec(`INSERT INTO evidence(entity_type,entity_id,summary,drift_status) VALUES ('pattern',1,'cobra used','ok');`)
+	_, _ = conn.Exec(`INSERT INTO search_index(title,content,entity_type,entity_id) VALUES ('Cobra pattern','Use cobra for CLI','pattern',1);`)
+
+	svc := NewService(conn)
+
+	// No filter — should return both
+	res, err := svc.Recall(context.Background(), "Cobra", RecallOptions{})
+	if err != nil {
+		t.Fatalf("Recall error: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 items (decision + pattern), got %d", len(res.Items))
+	}
+
+	// Filter to decisions only
+	res, err = svc.Recall(context.Background(), "Cobra", RecallOptions{Kind: "decision"})
+	if err != nil {
+		t.Fatalf("Recall with kind=decision error: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(res.Items))
+	}
+	if res.Items[0].EntityType != "decision" {
+		t.Fatalf("expected entity_type=decision, got %s", res.Items[0].EntityType)
+	}
+
+	// Filter to patterns only
+	res, err = svc.Recall(context.Background(), "Cobra", RecallOptions{Kind: "pattern"})
+	if err != nil {
+		t.Fatalf("Recall with kind=pattern error: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 pattern, got %d", len(res.Items))
+	}
+	if res.Items[0].EntityType != "pattern" {
+		t.Fatalf("expected entity_type=pattern, got %s", res.Items[0].EntityType)
+	}
+}
+
 func TestRecallLegacyQueriesWhenPatternsTableMissing(t *testing.T) {
 	conn, cleanup := recallTestDB(t)
 	defer cleanup()

@@ -9,8 +9,9 @@ import (
 
 func newRecallCommand(app *App) *cobra.Command {
 	var (
-		jsonOut bool
-		limit   int
+		jsonOut    bool
+		limit      int
+		kindFilter string
 	)
 
 	cmd := &cobra.Command{
@@ -37,7 +38,7 @@ func newRecallCommand(app *App) *cobra.Command {
 			}
 			defer conn.Close()
 
-			result, err := recall.NewService(conn).Recall(cmd.Context(), query, recall.RecallOptions{Limit: limit})
+			result, err := recall.NewService(conn).Recall(cmd.Context(), query, recall.RecallOptions{Limit: limit, Kind: kindFilter})
 			if err != nil {
 				if jsonOut {
 					return exitJSONCommandError(err)
@@ -72,5 +73,6 @@ func newRecallCommand(app *App) *cobra.Command {
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().IntVar(&limit, "limit", 10, "Maximum results")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter by entity type: decision, pattern")
 	return cmd
 }

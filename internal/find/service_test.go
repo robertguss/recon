@@ -497,3 +497,41 @@ func TestBuildListWhereShortPackageName(t *testing.T) {
 		t.Fatalf("expected second arg '%%/cli', got %v", args[1])
 	}
 }
+
+func TestListByFileSubstringMatch(t *testing.T) {
+	conn, cleanup := findTestDB(t)
+	defer cleanup()
+
+	// Add files with "template" in various positions
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (10,1,'template.go','go',5,'h10','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (10,10,'func','TemplateFunc','func()','func TemplateFunc(){}',1,1,1,'');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (11,1,'template_funcs.go','go',5,'h11','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (11,11,'func','TemplateFuncsHelper','func()','func TemplateFuncsHelper(){}',1,1,1,'');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (12,1,'shortcode_template.go','go',5,'h12','x','x');`)
+	_, _ = conn.Exec(`INSERT INTO symbols(id,file_id,kind,name,signature,body,line_start,line_end,exported,receiver) VALUES (12,12,'func','ShortcodeTemplate','func()','func ShortcodeTemplate(){}',1,1,1,'');`)
+
+	// "template" should match all three files via substring
+	result, err := NewService(conn).List(context.Background(), QueryOptions{FilePath: "template"}, 50)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if result.Total != 3 {
+		t.Fatalf("expected 3 symbols matching 'template' substring, got %d", result.Total)
+	}
+}
+
+func TestMatchFilePathSubstring(t *testing.T) {
+	// Substring match: "template" should match files containing it
+	if !matchFilePath("template.go", "template") {
+		t.Fatal("expected 'template' to match 'template.go'")
+	}
+	if !matchFilePath("template_funcs.go", "template") {
+		t.Fatal("expected 'template' to match 'template_funcs.go'")
+	}
+	if !matchFilePath("shortcode_template.go", "template") {
+		t.Fatal("expected 'template' to match 'shortcode_template.go'")
+	}
+	if matchFilePath("main.go", "template") {
+		t.Fatal("expected 'template' to NOT match 'main.go'")
+	}
+}

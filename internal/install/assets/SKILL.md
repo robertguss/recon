@@ -102,7 +102,7 @@ Flags:
 
 - `--json` — output JSON (includes knowledge links from edges)
 - `--package <path>` — filter by package path
-- `--file <filename>` — filter by filename (exact match)
+- `--file <filename>` — filter by filename (substring match)
 - `--kind <kind>` — filter by symbol kind: `func`, `method`, `type`, `var`,
   `const`
 - `--limit <n>` — max symbols in list mode (default: 50)
@@ -218,12 +218,15 @@ recall before creating new decisions to avoid duplicates.
 recon recall "error handling"       # search for relevant knowledge
 recon recall "testing" --limit 20   # increase result limit
 recon recall "CLI" --json           # structured output with edges
+recon recall "CLI" --kind decision  # only decisions
+recon recall "CLI" --kind pattern   # only patterns
 ```
 
 Flags:
 
 - `--json` — output JSON (includes connected edges)
 - `--limit <n>` — max results (default: 10)
+- `--kind <type>` — filter by entity type: `decision`, `pattern`
 
 ### `recon status`
 

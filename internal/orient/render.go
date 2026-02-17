@@ -94,6 +94,9 @@ func RenderText(payload Payload) string {
 	} else {
 		for _, d := range payload.ActiveDecisions {
 			fmt.Fprintf(&b, "- #%d %s [%s] drift=%s updated=%s\n", d.ID, d.Title, d.Confidence, d.Drift, d.UpdatedAt)
+			if d.Reasoning != "" {
+				fmt.Fprintf(&b, "  Why: %s\n", d.Reasoning)
+			}
 		}
 	}
 
@@ -101,6 +104,9 @@ func RenderText(payload Payload) string {
 		b.WriteString("\nActive patterns:\n")
 		for _, p := range payload.ActivePatterns {
 			fmt.Fprintf(&b, "- #%d %s [%s] drift=%s\n", p.ID, p.Title, p.Confidence, p.Drift)
+			if p.Reasoning != "" {
+				fmt.Fprintf(&b, "  Why: %s\n", p.Reasoning)
+			}
 		}
 	}
 

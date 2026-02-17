@@ -3,9 +3,12 @@ package cli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/robertguss/recon/internal/find"
 )
 
 // ---------------------------------------------------------------------------
@@ -776,6 +779,56 @@ func TestM4RecallTextPatternEntityType(t *testing.T) {
 	}
 }
 
+func TestM4RecallTextWithKindFilter(t *testing.T) {
+	_, app := m4Setup(t)
+
+	// Create a decision
+	if _, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"Kind filter decision",
+		"--reasoning", "test kind",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	}); err != nil {
+		t.Fatalf("create decision: %v", err)
+	}
+
+	// Create a pattern
+	if _, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"Kind filter pattern",
+		"--reasoning", "test kind pattern",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-path", "go.mod",
+	}); err != nil {
+		t.Fatalf("create pattern: %v", err)
+	}
+
+	// Filter to decisions only
+	out, _, err := runCommandWithCapture(t, newRecallCommand(app), []string{"Kind", "--kind", "decision"})
+	if err != nil {
+		t.Fatalf("expected recall success, got %v", err)
+	}
+	if !strings.Contains(out, "[decision]") {
+		t.Fatalf("expected [decision] label in output, out=%q", out)
+	}
+	if strings.Contains(out, "[pattern]") {
+		t.Fatalf("expected no [pattern] label when filtering by decision, out=%q", out)
+	}
+
+	// Filter to patterns only
+	out, _, err = runCommandWithCapture(t, newRecallCommand(app), []string{"Kind", "--kind", "pattern"})
+	if err != nil {
+		t.Fatalf("expected recall success, got %v", err)
+	}
+	if !strings.Contains(out, "[pattern]") {
+		t.Fatalf("expected [pattern] label in output, out=%q", out)
+	}
+	if strings.Contains(out, "[decision]") {
+		t.Fatalf("expected no [decision] label when filtering by pattern, out=%q", out)
+	}
+}
+
 func TestM4RecallTextNoResults(t *testing.T) {
 	_, app := m4Setup(t)
 	out, _, err := runCommandWithCapture(t, newRecallCommand(app), []string{"zzz_no_match_zzz"})
@@ -1248,6 +1301,116 @@ func TestM4PatternJSONPromotedOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, `"pattern_id"`) {
 		t.Fatalf("expected pattern_id in JSON output, out=%q", out)
+	}
+}
+
+func TestM4FindListLimitHint(t *testing.T) {
+	// Create a module with more than 2 symbols, then list with --limit 2
+	// The output should show a hint about using --limit to see more.
+	root := t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write("go.mod", "module example.com/recon\n")
+	write("main.go", "package main\nfunc A() {}\nfunc B() {}\nfunc C() {}\n")
+
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), nil); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{
+		"--kind", "func", "--limit", "2",
+	})
+	if err != nil {
+		t.Fatalf("expected list success, got %v", err)
+	}
+	if !strings.Contains(out, "Use --limit") {
+		t.Fatalf("expected limit hint in output, out=%q", out)
+	}
+}
+
+func TestM4FindListNoLimitHintWhenAllShown(t *testing.T) {
+	_, app := m4Setup(t)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{
+		"--kind", "func",
+	})
+	if err != nil {
+		t.Fatalf("expected list success, got %v", err)
+	}
+	// When all results fit within the limit, no hint should be shown
+	if strings.Contains(out, "Use --limit") {
+		t.Fatalf("expected no limit hint when all results shown, out=%q", out)
+	}
+}
+
+func TestM4EnrichPackageHeat(t *testing.T) {
+	origExec := execCommandContext
+	defer func() { execCommandContext = origExec }()
+
+	// Mock git output: 5 changes in internal/cli, 1 in root
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "echo", "internal/cli/find.go\ninternal/cli/root.go\ninternal/cli/init.go\ninternal/cli/sync.go\ninternal/cli/decide.go\nmain.go")
+	}
+
+	pkgs := []find.PackageSummary{
+		{Path: "internal/cli", Name: "cli"},
+		{Path: ".", Name: "main"},
+	}
+	enrichPackageHeat(context.Background(), "/tmp/fake", pkgs)
+
+	if pkgs[0].Heat != "hot" {
+		t.Fatalf("expected internal/cli heat=hot (5 commits), got %s", pkgs[0].Heat)
+	}
+	if pkgs[1].Heat != "warm" {
+		t.Fatalf("expected root heat=warm (1 commit), got %s", pkgs[1].Heat)
+	}
+}
+
+func TestM4EnrichPackageHeatGitError(t *testing.T) {
+	origExec := execCommandContext
+	defer func() { execCommandContext = origExec }()
+
+	// Mock git failure
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "false")
+	}
+
+	pkgs := []find.PackageSummary{{Path: ".", Name: "main"}}
+	// Should not panic, just return without setting heat
+	enrichPackageHeat(context.Background(), "/tmp/fake", pkgs)
+	if pkgs[0].Heat != "" {
+		t.Fatalf("expected empty heat on git error, got %s", pkgs[0].Heat)
+	}
+}
+
+func TestM4EnrichPackageHeatFallbackToRoot(t *testing.T) {
+	origExec := execCommandContext
+	defer func() { execCommandContext = origExec }()
+
+	// File in unknown dir — should fall back to root package
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "echo", "unknown/dir/file.go")
+	}
+
+	pkgs := []find.PackageSummary{
+		{Path: "internal/cli", Name: "cli"},
+		{Path: ".", Name: "main"},
+	}
+	enrichPackageHeat(context.Background(), "/tmp/fake", pkgs)
+
+	if pkgs[1].RecentCommits != 1 {
+		t.Fatalf("expected root package to get fallback commit, got %d", pkgs[1].RecentCommits)
 	}
 }
 
