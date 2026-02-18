@@ -1599,3 +1599,24 @@ func TestFindImportsOf_Empty(t *testing.T) {
 		t.Errorf("expected no-imports message, got: %s", out)
 	}
 }
+
+func TestEdgesListShowsTitles(t *testing.T) {
+	app := setupInitializedApp(t)
+	// Create a decision, then create an edge from it
+	decisionID := createTestDecision(t, app, "ExitError is the standard error")
+	if _, _, err := runCommandWithCapture(t, newEdgesCommand(app), []string{
+		"--create",
+		"--from", fmt.Sprintf("decision:%d", decisionID),
+		"--to", "package:internal/cli",
+		"--relation", "affects",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+	out, _, err := runCommandWithCapture(t, newEdgesCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("list edges: %v", err)
+	}
+	if !strings.Contains(out, "ExitError is the standard error") {
+		t.Errorf("expected decision title in output, got: %s", out)
+	}
+}

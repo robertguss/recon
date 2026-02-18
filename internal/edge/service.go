@@ -183,6 +183,71 @@ func (s *Service) query(ctx context.Context, q string, args ...any) ([]Edge, err
 	return edges, rows.Err()
 }
 
+// EdgeWithTitle embeds Edge and adds FromTitle for knowledge entity edges.
+type EdgeWithTitle struct {
+	Edge
+	FromTitle string `json:"from_title,omitempty"`
+}
+
+func (s *Service) ListAllWithTitles(ctx context.Context) ([]EdgeWithTitle, error) {
+	return s.queryWithTitles(ctx, `
+SELECT e.id, e.from_type, e.from_id, e.to_type, e.to_ref, e.relation,
+       e.source, e.confidence, e.created_at,
+       COALESCE(d.title, p.title, '') as from_title
+FROM edges e
+LEFT JOIN decisions d ON e.from_type = 'decision' AND e.from_id = d.id
+LEFT JOIN patterns p ON e.from_type = 'pattern' AND e.from_id = p.id
+ORDER BY e.from_type, e.from_id, e.relation, e.to_type, e.to_ref;
+`)
+}
+
+func (s *Service) ListFromWithTitles(ctx context.Context, fromType string, fromID int64) ([]EdgeWithTitle, error) {
+	return s.queryWithTitles(ctx, `
+SELECT e.id, e.from_type, e.from_id, e.to_type, e.to_ref, e.relation,
+       e.source, e.confidence, e.created_at,
+       COALESCE(d.title, p.title, '') as from_title
+FROM edges e
+LEFT JOIN decisions d ON e.from_type = 'decision' AND e.from_id = d.id
+LEFT JOIN patterns p ON e.from_type = 'pattern' AND e.from_id = p.id
+WHERE e.from_type = ? AND e.from_id = ?
+ORDER BY e.relation, e.to_type, e.to_ref;
+`, fromType, fromID)
+}
+
+func (s *Service) ListToWithTitles(ctx context.Context, toType, toRef string) ([]EdgeWithTitle, error) {
+	return s.queryWithTitles(ctx, `
+SELECT e.id, e.from_type, e.from_id, e.to_type, e.to_ref, e.relation,
+       e.source, e.confidence, e.created_at,
+       COALESCE(d.title, p.title, '') as from_title
+FROM edges e
+LEFT JOIN decisions d ON e.from_type = 'decision' AND e.from_id = d.id
+LEFT JOIN patterns p ON e.from_type = 'pattern' AND e.from_id = p.id
+WHERE e.to_type = ? AND e.to_ref = ?
+ORDER BY e.relation, e.from_type, e.from_id;
+`, toType, toRef)
+}
+
+func (s *Service) queryWithTitles(ctx context.Context, q string, args ...any) ([]EdgeWithTitle, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query edges with titles: %w", err)
+	}
+	defer rows.Close()
+	edges := make([]EdgeWithTitle, 0)
+	for rows.Next() {
+		var e EdgeWithTitle
+		if err := rows.Scan(
+			&e.ID, &e.FromType, &e.FromID, &e.ToType, &e.ToRef,
+			&e.Relation, &e.Source, &e.Confidence, &e.CreatedAt,
+			&e.FromTitle,
+		); err != nil {
+			return nil, fmt.Errorf("scan edge with title: %w", err)
+		}
+		edges = append(edges, e)
+	}
+	return edges, rows.Err()
+}
+
 func toIDFromRef(ref string) int64 {
 	var id int64
 	fmt.Sscanf(ref, "%d", &id)

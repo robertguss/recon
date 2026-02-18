@@ -290,3 +290,45 @@ func TestListAll(t *testing.T) {
 		t.Fatalf("expected 2 edges, got %d", len(edges))
 	}
 }
+
+func TestListAllWithTitles(t *testing.T) {
+	conn, cleanup := edgeTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	svc := NewService(conn)
+
+	// Insert a decision
+	var decisionID int64
+	if err := conn.QueryRowContext(ctx,
+		`INSERT INTO decisions (title, reasoning, confidence, status, created_at, updated_at) VALUES ('Test Decision', 'reason', 'high', 'active', 'x', 'x') RETURNING id`,
+	).Scan(&decisionID); err != nil {
+		t.Fatalf("insert decision: %v", err)
+	}
+
+	// Create an edge from that decision to a package
+	if _, err := svc.Create(ctx, CreateInput{
+		FromType:   "decision",
+		FromID:     decisionID,
+		ToType:     "package",
+		ToRef:      "internal/cli",
+		Relation:   "affects",
+		Source:     "manual",
+		Confidence: "high",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	result, err := svc.ListAllWithTitles(ctx)
+	if err != nil {
+		t.Fatalf("ListAllWithTitles: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected edges")
+	}
+	if result[0].FromTitle == "" {
+		t.Errorf("expected non-empty FromTitle, got empty string")
+	}
+	if result[0].FromTitle != "Test Decision" {
+		t.Errorf("expected FromTitle='Test Decision', got %q", result[0].FromTitle)
+	}
+}
