@@ -23,7 +23,9 @@ just run <args>     # Run via go run, forwarding args
 just test           # Run full test suite (go test ./...)
 just test-race      # Run tests with race detector
 just cover          # Generate coverage.out and print summary
+just cover-html     # Open HTML coverage report in browser (requires coverage.out)
 just fmt            # Format all Go packages
+just clean          # Remove ./bin and coverage.out
 ```
 
 Run a single package's tests:
@@ -57,7 +59,7 @@ just db-reset       # Delete .recon/recon.db
 - `cmd/recon/main.go` — entry point, delegates to `internal/cli.NewRootCommand`
 - `internal/cli/` — all Cobra command definitions and CLI wiring
   - `root.go` — builds the root command, registers subcommands (init, sync,
-    orient, find, decide, pattern, recall, status)
+    orient, find, decide, pattern, recall, status, edges, version)
   - `store.go` — helper to open existing DB, returns a typed error if DB not
     initialized
   - `output.go` — shared output formatting (JSON/text modes)
@@ -77,6 +79,8 @@ wrapping `*sql.DB`:
 | `internal/orient`    | Status aggregation and next-action suggestions                                        |
 | `internal/pattern`   | Detect and record recurring code patterns                                             |
 | `internal/index`     | Repository indexing: parse Go files, extract symbols/imports/deps, upsert into DB     |
+| `internal/edge`      | Dependency edge queries: resolve import/symbol relationships between packages         |
+| `internal/install`   | Hook installation: embed and write Claude Code session hooks into `.claude/hooks/`    |
 
 ### Database Layer
 
