@@ -1560,10 +1560,18 @@ func seedImportGraph(t *testing.T, app *App) {
 		t.Fatalf("seedImportGraph open db: %v", err)
 	}
 	defer conn.Close()
-	_, _ = conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (100,'internal/cli','cli','example.com/recon/internal/cli',1,10,'x','x');`)
-	_, _ = conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (200,'internal/db','db','example.com/recon/internal/db',1,10,'x','x');`)
-	_, _ = conn.Exec(`INSERT OR IGNORE INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (100,100,'internal/cli/root.go','go',10,'h','x','x');`)
-	_, _ = conn.Exec(`INSERT OR IGNORE INTO imports(id,from_file_id,to_path,to_package_id,alias,import_type) VALUES (100,100,'example.com/recon/internal/db',200,'','regular');`)
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (100,'internal/cli','cli','example.com/recon/internal/cli',1,10,'x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert cli package: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (200,'internal/db','db','example.com/recon/internal/db',1,10,'x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert db package: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (100,100,'internal/cli/root.go','go',10,'h','x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert file: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO imports(id,from_file_id,to_path,to_package_id,alias,import_type) VALUES (100,100,'example.com/recon/internal/db',200,'','regular');`); err != nil {
+		t.Fatalf("seedImportGraph insert import: %v", err)
+	}
 }
 
 func TestFindImportsOf(t *testing.T) {

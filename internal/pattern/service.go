@@ -187,16 +187,25 @@ func (s *Service) UpdatePattern(ctx context.Context, id int64, in UpdatePatternI
 		return fmt.Errorf("pattern %d: %w", id, ErrNotFound)
 	}
 
-	var title, description string
+	var title, description, example, evidenceSummary string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT title, description FROM patterns WHERE id = ?`, id,
-	).Scan(&title, &description); err != nil {
+		`SELECT p.title, p.description,
+		        COALESCE(json_extract(pr.entity_data, '$.example'), ''),
+		        COALESCE(e.summary, '')
+		 FROM patterns p
+		 LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
+		 LEFT JOIN proposals pr ON pr.entity_type = 'pattern'
+		     AND pr.status = 'promoted'
+		     AND e.summary IS NOT NULL
+		     AND json_extract(pr.entity_data, '$.evidence_summary') = e.summary
+		 WHERE p.id = ?`, id,
+	).Scan(&title, &description, &example, &evidenceSummary); err != nil {
 		return fmt.Errorf("read updated pattern for reindex: %w", err)
 	}
 
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE search_index SET title = ?, content = ? WHERE entity_type = 'pattern' AND entity_id = ?`,
-		title, description, id,
+		title, description+"\n"+example+"\n"+evidenceSummary, id,
 	); err != nil {
 		return fmt.Errorf("reindex pattern: %w", err)
 	}

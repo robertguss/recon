@@ -292,16 +292,19 @@ func (s *Service) UpdateDecision(ctx context.Context, id int64, in UpdateDecisio
 		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
 	}
 
-	var title, reasoning string
+	var title, reasoning, evidenceSummary string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT title, reasoning FROM decisions WHERE id = ?`, id,
-	).Scan(&title, &reasoning); err != nil {
+		`SELECT d.title, d.reasoning, COALESCE(e.summary, '')
+		 FROM decisions d
+		 LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+		 WHERE d.id = ?`, id,
+	).Scan(&title, &reasoning, &evidenceSummary); err != nil {
 		return fmt.Errorf("read updated decision for reindex: %w", err)
 	}
 
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE search_index SET title = ?, content = ? WHERE entity_type = 'decision' AND entity_id = ?`,
-		title, reasoning, id,
+		title, reasoning+"\n"+evidenceSummary, id,
 	); err != nil {
 		return fmt.Errorf("reindex decision: %w", err)
 	}
