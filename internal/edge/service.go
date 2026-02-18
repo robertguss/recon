@@ -171,7 +171,7 @@ func (s *Service) query(ctx context.Context, q string, args ...any) ([]Edge, err
 	}
 	defer rows.Close()
 
-	var edges []Edge
+	edges := make([]Edge, 0)
 	for rows.Next() {
 		var e Edge
 		if err := rows.Scan(&e.ID, &e.FromType, &e.FromID, &e.ToType, &e.ToRef,

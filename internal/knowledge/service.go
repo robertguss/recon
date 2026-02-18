@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -406,24 +407,60 @@ func (s *Service) runGrepPattern(specRaw string, moduleRoot string) (runCheckOut
 		return runCheckOutcome{}, fmt.Errorf("compile regex pattern: %w", err)
 	}
 
-	files, err := index.CollectEligibleGoFiles(moduleRoot)
-	if err != nil {
-		return runCheckOutcome{}, fmt.Errorf("load files for grep_pattern: %w", err)
-	}
-
 	total := 0
 	matched := 0
-	for _, f := range files {
-		if spec.Scope != "" {
-			baseMatch, _ := filepath.Match(spec.Scope, filepath.Base(f.RelPath))
-			relMatch, _ := filepath.Match(spec.Scope, f.RelPath)
-			if !baseMatch && !relMatch {
-				continue
+
+	if spec.Scope != "" {
+		// Scope provided: walk all files (not just .go) and filter by scope glob.
+		// This allows scoping to go.mod, *.go, specific directories, etc.
+		walkErr := filepath.WalkDir(moduleRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			if d.IsDir() {
+				name := d.Name()
+				if path != moduleRoot && strings.HasPrefix(name, ".") {
+					return filepath.SkipDir
+				}
+				if name == "vendor" || name == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, relErr := filepath.Rel(moduleRoot, path)
+			if relErr != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			baseMatch, _ := filepath.Match(spec.Scope, filepath.Base(rel))
+			relMatch, _ := filepath.Match(spec.Scope, rel)
+			if !baseMatch && !relMatch {
+				return nil
+			}
+			total++
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return nil
+			}
+			if re.Match(content) {
+				matched++
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return runCheckOutcome{}, fmt.Errorf("walk files for grep_pattern: %w", walkErr)
 		}
-		total++
-		if re.Match(f.Content) {
-			matched++
+	} else {
+		// No scope: grep all indexed Go files.
+		files, collectErr := index.CollectEligibleGoFiles(moduleRoot)
+		if collectErr != nil {
+			return runCheckOutcome{}, fmt.Errorf("load files for grep_pattern: %w", collectErr)
+		}
+		total = len(files)
+		for _, f := range files {
+			if re.Match(f.Content) {
+				matched++
+			}
 		}
 	}
 
