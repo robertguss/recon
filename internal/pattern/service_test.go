@@ -3,6 +3,7 @@ package pattern
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -340,5 +341,95 @@ func TestProposePatternDBError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "begin pattern tx") {
 		t.Fatalf("expected begin tx error, got %v", err)
+	}
+}
+
+func TestUpdatePatternDescription(t *testing.T) {
+	conn, root, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyPattern(context.Background(), ProposePatternInput{
+		Title:           "Original Pattern",
+		Description:     "original description",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed pattern: %v", err)
+	}
+
+	err = svc.UpdatePattern(context.Background(), res.PatternID, UpdatePatternInput{
+		Description: "updated description",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePattern: %v", err)
+	}
+
+	var description string
+	if err := conn.QueryRow(`SELECT description FROM patterns WHERE id = ?`, res.PatternID).Scan(&description); err != nil {
+		t.Fatalf("query description: %v", err)
+	}
+	if description != "updated description" {
+		t.Fatalf("expected updated description, got %q", description)
+	}
+}
+
+func TestUpdatePatternTitle(t *testing.T) {
+	conn, root, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyPattern(context.Background(), ProposePatternInput{
+		Title:           "Original Pattern",
+		Description:     "description",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed pattern: %v", err)
+	}
+
+	err = svc.UpdatePattern(context.Background(), res.PatternID, UpdatePatternInput{
+		Title: "New Pattern Title",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePattern title: %v", err)
+	}
+
+	var title string
+	if err := conn.QueryRow(`SELECT title FROM patterns WHERE id = ?`, res.PatternID).Scan(&title); err != nil {
+		t.Fatalf("query title: %v", err)
+	}
+	if title != "New Pattern Title" {
+		t.Fatalf("expected New Pattern Title, got %q", title)
+	}
+}
+
+func TestUpdatePattern_NotFound(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	err := svc.UpdatePattern(context.Background(), 9999, UpdatePatternInput{
+		Title: "x",
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdatePattern_EmptyInput(t *testing.T) {
+	conn, _, cleanup := patternTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	err := svc.UpdatePattern(context.Background(), 1, UpdatePatternInput{})
+	if err == nil {
+		t.Fatal("expected error for empty UpdatePatternInput")
 	}
 }

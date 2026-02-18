@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1408,5 +1409,144 @@ func TestInitInstallsClaudeCodeFiles(t *testing.T) {
 	}
 	if !strings.Contains(out, "Claude Code integration installed") {
 		t.Fatalf("expected Claude Code mention in text, out=%q", out)
+	}
+}
+
+// setupInitializedApp creates a temp module root and runs init, returning a ready *App.
+func setupInitializedApp(t *testing.T) *App {
+	t.Helper()
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"}); err != nil {
+		t.Fatalf("setupInitializedApp init: %v", err)
+	}
+	return app
+}
+
+// createTestDecision creates a promoted decision in a fresh DB and returns its ID.
+func createTestDecision(t *testing.T, app *App, title string) int64 {
+	t.Helper()
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		title,
+		"--reasoning", "test reasoning",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-spec", `{"path":"go.mod"}`,
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("createTestDecision: %v (out=%q)", err, out)
+	}
+	var result struct {
+		DecisionID int64 `json:"decision_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || result.DecisionID == 0 {
+		t.Fatalf("createTestDecision: parse id: %v (out=%q)", err, out)
+	}
+	return result.DecisionID
+}
+
+// createTestPattern creates a promoted pattern in a fresh DB and returns its ID.
+func createTestPattern(t *testing.T, app *App, title string) int64 {
+	t.Helper()
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		title,
+		"--reasoning", "test description",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-spec", `{"path":"go.mod"}`,
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("createTestPattern: %v (out=%q)", err, out)
+	}
+	var result struct {
+		PatternID int64 `json:"pattern_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || result.PatternID == 0 {
+		t.Fatalf("createTestPattern: parse id: %v (out=%q)", err, out)
+	}
+	return result.PatternID
+}
+
+func TestDecideUpdateReasoning(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--reasoning", "new reasoning text",
+	})
+	if err != nil {
+		t.Fatalf("update reasoning: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestDecideUpdateTitle(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--title", "New Decision Title",
+	})
+	if err != nil {
+		t.Fatalf("update title: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestDecideUpdate_NoFieldsError(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	_, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+	})
+	if err == nil {
+		t.Fatal("expected error for --update with no fields")
+	}
+}
+
+func TestPatternUpdateReasoning(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--reasoning", "new description text",
+	})
+	if err != nil {
+		t.Fatalf("update pattern reasoning: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestPatternUpdateTitle(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--title", "New Pattern Title",
+	})
+	if err != nil {
+		t.Fatalf("update pattern title: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestPatternUpdate_NoFieldsError(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+	})
+	if err == nil {
+		t.Fatal("expected error for --update with no fields")
 	}
 }

@@ -151,6 +151,59 @@ VALUES ('proposal', ?, ?, ?, ?, ?, ?, ?, 'broken');
 
 var ErrNotFound = fmt.Errorf("not found")
 
+type UpdatePatternInput struct {
+	Title       string
+	Description string
+}
+
+func (s *Service) UpdatePattern(ctx context.Context, id int64, in UpdatePatternInput) error {
+	if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.Description) == "" {
+		return fmt.Errorf("at least one field (title, description) is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	setClauses := []string{"updated_at = ?"}
+	args := []any{now}
+
+	if strings.TrimSpace(in.Title) != "" {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, strings.TrimSpace(in.Title))
+	}
+	if strings.TrimSpace(in.Description) != "" {
+		setClauses = append(setClauses, "description = ?")
+		args = append(args, strings.TrimSpace(in.Description))
+	}
+	args = append(args, id)
+
+	query := "UPDATE patterns SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = ? AND status = 'active';"
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update pattern: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pattern %d: %w", id, ErrNotFound)
+	}
+
+	var title, description string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT title, description FROM patterns WHERE id = ?`, id,
+	).Scan(&title, &description); err != nil {
+		return fmt.Errorf("read updated pattern for reindex: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE search_index SET title = ?, content = ? WHERE entity_type = 'pattern' AND entity_id = ?`,
+		title, description, id,
+	); err != nil {
+		return fmt.Errorf("reindex pattern: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) ArchivePattern(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE patterns SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active';`,

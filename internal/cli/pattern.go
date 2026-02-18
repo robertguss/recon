@@ -12,6 +12,7 @@ import (
 func newPatternCommand(app *App) *cobra.Command {
 	var (
 		reasoning       string
+		updateTitle     string
 		example         string
 		confidence      string
 		evidenceSummary string
@@ -24,6 +25,7 @@ func newPatternCommand(app *App) *cobra.Command {
 		jsonOut         bool
 		listFlag        bool
 		deleteID        int64
+		updateID        int64
 		affectsRefs     []string
 	)
 
@@ -92,6 +94,62 @@ func newPatternCommand(app *App) *cobra.Command {
 					return writeJSON(map[string]any{"archived": true, "id": deleteID})
 				}
 				fmt.Printf("Pattern %d archived.\n", deleteID)
+				return nil
+			}
+
+			// Update mode
+			if updateID > 0 {
+				titleChanged := cmd.Flags().Changed("title")
+				reasoningChanged := cmd.Flags().Changed("reasoning")
+
+				if !titleChanged && !reasoningChanged {
+					msg := "--update requires at least one of --reasoning or --title"
+					if jsonOut {
+						_ = writeJSONError("missing_argument", msg, map[string]any{"id": updateID})
+						return ExitError{Code: 2}
+					}
+					return ExitError{Code: 2, Message: msg}
+				}
+
+				conn, err := openExistingDB(app)
+				if err != nil {
+					if jsonOut {
+						return exitJSONCommandError(err)
+					}
+					return err
+				}
+				defer conn.Close()
+
+				svc := pattern.NewService(conn)
+
+				if titleChanged || reasoningChanged {
+					if err := svc.UpdatePattern(cmd.Context(), updateID, pattern.UpdatePatternInput{
+						Title:       updateTitle,
+						Description: reasoning,
+					}); err != nil {
+						if jsonOut {
+							code := "internal_error"
+							if errors.Is(err, pattern.ErrNotFound) {
+								code = "not_found"
+							}
+							_ = writeJSONError(code, err.Error(), map[string]any{"id": updateID})
+							return ExitError{Code: 2}
+						}
+						return err
+					}
+				}
+
+				if jsonOut {
+					fields := map[string]any{"updated": true, "id": updateID}
+					if titleChanged {
+						fields["title"] = updateTitle
+					}
+					if reasoningChanged {
+						fields["reasoning"] = reasoning
+					}
+					return writeJSON(fields)
+				}
+				fmt.Printf("Pattern %d updated.\n", updateID)
 				return nil
 			}
 
@@ -225,6 +283,8 @@ func newPatternCommand(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active patterns")
 	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a pattern by ID")
+	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a pattern by ID (use with --reasoning or --title)")
+	cmd.Flags().StringVar(&updateTitle, "title", "", "New title (for --update mode)")
 	cmd.Flags().StringSliceVar(&affectsRefs, "affects", nil, "Package/file/symbol this pattern affects (creates edges)")
 
 	return cmd
