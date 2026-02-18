@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robertguss/recon/internal/db"
 	"github.com/robertguss/recon/internal/index"
 	"github.com/robertguss/recon/internal/orient"
 	"github.com/spf13/cobra"
@@ -1653,6 +1654,38 @@ func TestPatternDeleteFlagStillWorks(t *testing.T) {
 	}
 	if !strings.Contains(out, "archived") {
 		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestResetCommand(t *testing.T) {
+	app := setupInitializedApp(t)
+	// Verify DB exists before reset
+	dbPath := db.DBPath(app.ModuleRoot)
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("expected db to exist before reset: %v", err)
+	}
+	out, _, err := runCommandWithCapture(t, newResetCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("reset --force: %v", err)
+	}
+	if !strings.Contains(out, "reset") {
+		t.Errorf("expected 'reset' in output, got: %s", out)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("expected db file to be deleted after reset")
+	}
+}
+
+func TestResetCommand_NotInitialized(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	// No init — DB does not exist
+	out, _, err := runCommandWithCapture(t, newResetCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("reset on uninitialized: %v", err)
+	}
+	if !strings.Contains(out, "Nothing to reset") {
+		t.Errorf("expected 'Nothing to reset' in output, got: %s", out)
 	}
 }
 
