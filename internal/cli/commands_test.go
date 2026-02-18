@@ -1600,6 +1600,62 @@ func TestFindImportsOf_Empty(t *testing.T) {
 	}
 }
 
+func TestDecideArchiveFlag(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Archive me")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--archive", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestDecideDeleteFlagStillWorks(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Delete me via old flag")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--delete", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("--delete backward compat: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestPatternArchiveFlag(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Archive me")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--archive", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestPatternDeleteFlagStillWorks(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Delete me via old flag")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--delete", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("--delete backward compat: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
 func TestEdgesListShowsTitles(t *testing.T) {
 	app := setupInitializedApp(t)
 	// Create a decision, then create an edge from it

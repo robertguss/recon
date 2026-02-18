@@ -337,7 +337,10 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active decisions")
-	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a decision by ID")
+	cmd.Flags().Int64Var(&deleteID, "archive", 0, "Archive (soft-delete) a decision by ID")
+	// --delete kept as a hidden alias for backward compatibility
+	cmd.Flags().Int64Var(&deleteID, "delete", 0, "")
+	_ = cmd.Flags().MarkHidden("delete")
 	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence, --reasoning, or --title)")
 	cmd.Flags().StringVar(&updateTitle, "title", "", "New title (for --update mode)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run verification check only, without creating any state")

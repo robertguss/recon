@@ -282,7 +282,10 @@ func newPatternCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active patterns")
-	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a pattern by ID")
+	cmd.Flags().Int64Var(&deleteID, "archive", 0, "Archive (soft-delete) a pattern by ID")
+	// --delete kept as a hidden alias for backward compatibility
+	cmd.Flags().Int64Var(&deleteID, "delete", 0, "")
+	_ = cmd.Flags().MarkHidden("delete")
 	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a pattern by ID (use with --reasoning or --title)")
 	cmd.Flags().StringVar(&updateTitle, "title", "", "New title (for --update mode)")
 	cmd.Flags().StringSliceVar(&affectsRefs, "affects", nil, "Package/file/symbol this pattern affects (creates edges)")
