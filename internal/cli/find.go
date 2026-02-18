@@ -25,6 +25,8 @@ func newFindCommand(app *App) *cobra.Command {
 		kindFilter    string
 		limit         int
 		listPackages  bool
+		importsOf     string
+		importedBy    string
 	)
 
 	cmd := &cobra.Command{
@@ -32,6 +34,68 @@ func newFindCommand(app *App) *cobra.Command {
 		Short: "Find exact symbol or list symbols by filter",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if importsOf != "" {
+				conn, connErr := openExistingDB(app)
+				if connErr != nil {
+					if jsonOut {
+						return exitJSONCommandError(connErr)
+					}
+					return connErr
+				}
+				defer conn.Close()
+				results, err := find.NewService(conn).ImportsOf(cmd.Context(), importsOf)
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(results)
+				}
+				if len(results) == 0 {
+					fmt.Printf("No imports found for %s\n", importsOf)
+					return nil
+				}
+				fmt.Printf("Imports of %s (%d):\n", importsOf, len(results))
+				for _, r := range results {
+					fmt.Printf("- %s\n", r.Path)
+				}
+				return nil
+			}
+
+			if importedBy != "" {
+				conn, connErr := openExistingDB(app)
+				if connErr != nil {
+					if jsonOut {
+						return exitJSONCommandError(connErr)
+					}
+					return connErr
+				}
+				defer conn.Close()
+				results, err := find.NewService(conn).ImportedBy(cmd.Context(), importedBy)
+				if err != nil {
+					if jsonOut {
+						_ = writeJSONError("internal_error", err.Error(), nil)
+						return ExitError{Code: 2}
+					}
+					return err
+				}
+				if jsonOut {
+					return writeJSON(results)
+				}
+				if len(results) == 0 {
+					fmt.Printf("No packages import %s\n", importedBy)
+					return nil
+				}
+				fmt.Printf("Imported by %s (%d):\n", importedBy, len(results))
+				for _, r := range results {
+					fmt.Printf("- %s\n", r.Path)
+				}
+				return nil
+			}
+
 			if listPackages {
 				conn, connErr := openExistingDB(app)
 				if connErr != nil {
@@ -209,6 +273,8 @@ func newFindCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter by symbol kind (func, method, type, var, const)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum symbols in list mode")
 	cmd.Flags().BoolVar(&listPackages, "list-packages", false, "List all indexed packages")
+	cmd.Flags().StringVar(&importsOf, "imports-of", "", "List packages imported by this package")
+	cmd.Flags().StringVar(&importedBy, "imported-by", "", "List packages that import this package")
 	return cmd
 }
 

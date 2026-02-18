@@ -1550,3 +1550,52 @@ func TestPatternUpdate_NoFieldsError(t *testing.T) {
 		t.Fatal("expected error for --update with no fields")
 	}
 }
+
+// seedImportGraph inserts two packages and an import relationship into an initialized DB.
+func seedImportGraph(t *testing.T, app *App) {
+	t.Helper()
+	conn, err := openExistingDB(app)
+	if err != nil {
+		t.Fatalf("seedImportGraph open db: %v", err)
+	}
+	defer conn.Close()
+	_, _ = conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (100,'internal/cli','cli','example.com/recon/internal/cli',1,10,'x','x');`)
+	_, _ = conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (200,'internal/db','db','example.com/recon/internal/db',1,10,'x','x');`)
+	_, _ = conn.Exec(`INSERT OR IGNORE INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (100,100,'internal/cli/root.go','go',10,'h','x','x');`)
+	_, _ = conn.Exec(`INSERT OR IGNORE INTO imports(id,from_file_id,to_path,to_package_id,alias,import_type) VALUES (100,100,'example.com/recon/internal/db',200,'','regular');`)
+}
+
+func TestFindImportsOf(t *testing.T) {
+	app := setupInitializedApp(t)
+	seedImportGraph(t, app)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imports-of", "internal/cli"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "internal/db") {
+		t.Errorf("expected internal/db in output, got: %s", out)
+	}
+}
+
+func TestFindImportedBy(t *testing.T) {
+	app := setupInitializedApp(t)
+	seedImportGraph(t, app)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imported-by", "internal/db"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "internal/cli") {
+		t.Errorf("expected internal/cli in output, got: %s", out)
+	}
+}
+
+func TestFindImportsOf_Empty(t *testing.T) {
+	app := setupInitializedApp(t)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imports-of", "internal/nonexistent"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "No imports found") {
+		t.Errorf("expected no-imports message, got: %s", out)
+	}
+}

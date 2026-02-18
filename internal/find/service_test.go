@@ -535,3 +535,87 @@ func TestMatchFilePathSubstring(t *testing.T) {
 		t.Fatal("expected 'template' to NOT match 'main.go'")
 	}
 }
+
+func importsTestDB(t *testing.T) (*sql.DB, func()) {
+	t.Helper()
+	root := t.TempDir()
+	if _, err := db.EnsureReconDir(root); err != nil {
+		t.Fatalf("EnsureReconDir: %v", err)
+	}
+	conn, err := db.Open(db.DBPath(root))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	// pkg A (internal/a) with a file that imports pkg B
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (10,'internal/a','a','example.com/repo/internal/a',1,10,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (20,'internal/b','b','example.com/repo/internal/b',1,10,'x','x');`)
+	_, _ = conn.Exec(`INSERT INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (10,10,'internal/a/a.go','go',10,'h','x','x');`)
+	// pkg A's file imports pkg B via its full import path
+	_, _ = conn.Exec(`INSERT INTO imports(id,from_file_id,to_path,to_package_id,alias,import_type) VALUES (1,10,'example.com/repo/internal/b',20,'','regular');`)
+
+	return conn, func() { _ = conn.Close() }
+}
+
+func TestImportsOf(t *testing.T) {
+	conn, cleanup := importsTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	result, err := svc.ImportsOf(context.Background(), "internal/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected at least one import")
+	}
+	found := false
+	for _, p := range result {
+		if p.Path == "example.com/repo/internal/b" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected example.com/repo/internal/b in imports, got %v", result)
+	}
+}
+
+func TestImportedBy(t *testing.T) {
+	conn, cleanup := importsTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	result, err := svc.ImportedBy(context.Background(), "internal/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected at least one importer")
+	}
+	found := false
+	for _, p := range result {
+		if p.Path == "internal/a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected internal/a in importers, got %v", result)
+	}
+}
+
+func TestImportsOf_NotFound(t *testing.T) {
+	conn, cleanup := importsTestDB(t)
+	defer cleanup()
+	svc := NewService(conn)
+
+	result, err := svc.ImportsOf(context.Background(), "internal/nonexistent")
+	if err != nil {
+		t.Fatalf("expected nil error for missing package, got %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty slice for missing package, got %v", result)
+	}
+}
