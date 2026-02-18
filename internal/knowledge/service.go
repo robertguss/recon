@@ -256,6 +256,62 @@ func (s *Service) ArchiveDecision(ctx context.Context, id int64) error {
 	return nil
 }
 
+type UpdateDecisionInput struct {
+	Title     string
+	Reasoning string
+}
+
+func (s *Service) UpdateDecision(ctx context.Context, id int64, in UpdateDecisionInput) error {
+	if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.Reasoning) == "" {
+		return fmt.Errorf("at least one field (title, reasoning) is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	setClauses := []string{"updated_at = ?"}
+	args := []any{now}
+
+	if strings.TrimSpace(in.Title) != "" {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, strings.TrimSpace(in.Title))
+	}
+	if strings.TrimSpace(in.Reasoning) != "" {
+		setClauses = append(setClauses, "reasoning = ?")
+		args = append(args, strings.TrimSpace(in.Reasoning))
+	}
+	args = append(args, id)
+
+	query := "UPDATE decisions SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = ? AND status = 'active';"
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update decision: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("decision %d: %w", id, ErrNotFound)
+	}
+
+	var title, reasoning, evidenceSummary string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT d.title, d.reasoning, COALESCE(e.summary, '')
+		 FROM decisions d
+		 LEFT JOIN evidence e ON e.entity_type = 'decision' AND e.entity_id = d.id
+		 WHERE d.id = ?`, id,
+	).Scan(&title, &reasoning, &evidenceSummary); err != nil {
+		return fmt.Errorf("read updated decision for reindex: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE search_index SET title = ?, content = ? WHERE entity_type = 'decision' AND entity_id = ?`,
+		title, reasoning+"\n"+evidenceSummary, id,
+	); err != nil {
+		return fmt.Errorf("reindex decision: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) UpdateConfidence(ctx context.Context, id int64, confidence string) error {
 	confidence = strings.TrimSpace(strings.ToLower(confidence))
 	switch confidence {

@@ -120,7 +120,7 @@ func newEdgesCommand(app *App) *cobra.Command {
 					}
 					return err
 				}
-				edges, err := svc.ListFrom(cmd.Context(), fromType, fromID)
+				edges, err := svc.ListFromWithTitles(cmd.Context(), fromType, fromID)
 				if err != nil {
 					if jsonOut {
 						_ = writeJSONError("internal_error", err.Error(), nil)
@@ -142,7 +142,7 @@ func newEdgesCommand(app *App) *cobra.Command {
 					}
 					return ExitError{Code: 2, Message: msg}
 				}
-				edges, err := svc.ListTo(cmd.Context(), parts[0], parts[1])
+				edges, err := svc.ListToWithTitles(cmd.Context(), parts[0], parts[1])
 				if err != nil {
 					if jsonOut {
 						_ = writeJSONError("internal_error", err.Error(), nil)
@@ -155,7 +155,7 @@ func newEdgesCommand(app *App) *cobra.Command {
 
 			// List all mode
 			if listAll {
-				edges, err := svc.ListAll(cmd.Context())
+				edges, err := svc.ListAllWithTitles(cmd.Context())
 				if err != nil {
 					if jsonOut {
 						_ = writeJSONError("internal_error", err.Error(), nil)
@@ -200,7 +200,7 @@ func parseEntityRef(ref string) (string, int64, error) {
 	return parts[0], id, nil
 }
 
-func renderEdges(edges []edge.Edge, jsonOut bool) error {
+func renderEdges(edges []edge.EdgeWithTitle, jsonOut bool) error {
 	if jsonOut {
 		return writeJSON(edges)
 	}
@@ -209,8 +209,13 @@ func renderEdges(edges []edge.Edge, jsonOut bool) error {
 		return nil
 	}
 	for _, e := range edges {
-		fmt.Printf("#%d %s:%d -[%s]-> %s:%s (source=%s, confidence=%s)\n",
-			e.ID, e.FromType, e.FromID, e.Relation, e.ToType, e.ToRef, e.Source, e.Confidence)
+		title := ""
+		if e.FromTitle != "" {
+			title = fmt.Sprintf(" %q", e.FromTitle)
+		}
+		fmt.Printf("#%d %s:%d%s -[%s]-> %s:%s (source=%s, confidence=%s)\n",
+			e.ID, e.FromType, e.FromID, title, e.Relation,
+			e.ToType, e.ToRef, e.Source, e.Confidence)
 	}
 	return nil
 }

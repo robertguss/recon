@@ -462,3 +462,63 @@ LIMIT 25;
 	}
 	return deps, nil
 }
+
+// ImportResult holds the path and optional name of an imported package.
+type ImportResult struct {
+	Path string `json:"path"`
+	Name string `json:"name,omitempty"`
+}
+
+// ImportsOf returns the distinct packages imported by the given package path.
+func (s *Service) ImportsOf(ctx context.Context, pkgPath string) ([]ImportResult, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT i.to_path, COALESCE(p2.name, '')
+FROM imports i
+JOIN files f ON f.id = i.from_file_id
+JOIN packages p ON p.id = f.package_id
+LEFT JOIN packages p2 ON p2.id = i.to_package_id
+WHERE p.path = ?
+ORDER BY i.to_path;
+`, pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("query imports of %s: %w", pkgPath, err)
+	}
+	defer rows.Close()
+	var out []ImportResult
+	for rows.Next() {
+		var r ImportResult
+		if err := rows.Scan(&r.Path, &r.Name); err != nil {
+			return nil, fmt.Errorf("scan import: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ImportedBy returns the distinct packages that import the given package path.
+// pkgPath is matched against to_path (full import path) and also tried as a
+// suffix so both "github.com/owner/repo/internal/db" and "internal/db" work.
+func (s *Service) ImportedBy(ctx context.Context, pkgPath string) ([]ImportResult, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT p.path, p.name
+FROM imports i
+JOIN files f ON f.id = i.from_file_id
+JOIN packages p ON p.id = f.package_id
+WHERE i.to_path = ?
+   OR i.to_path LIKE ?
+ORDER BY p.path;
+`, pkgPath, "%/"+pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("query imported by %s: %w", pkgPath, err)
+	}
+	defer rows.Close()
+	var out []ImportResult
+	for rows.Next() {
+		var r ImportResult
+		if err := rows.Scan(&r.Path, &r.Name); err != nil {
+			return nil, fmt.Errorf("scan imported-by: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

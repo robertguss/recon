@@ -477,3 +477,93 @@ func TestRunGrepPattern_FindsVarDeclaration(t *testing.T) {
 		t.Fatalf("expected grep_pattern to pass, got: %s", outcome.Details)
 	}
 }
+
+func TestUpdateDecisionReasoning(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "Original Title",
+		Reasoning:       "original reasoning",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.UpdateDecision(context.Background(), res.DecisionID, UpdateDecisionInput{
+		Reasoning: "updated reasoning",
+	})
+	if err != nil {
+		t.Fatalf("UpdateDecision: %v", err)
+	}
+
+	var reasoning string
+	if err := conn.QueryRow(`SELECT reasoning FROM decisions WHERE id = ?`, res.DecisionID).Scan(&reasoning); err != nil {
+		t.Fatalf("query reasoning: %v", err)
+	}
+	if reasoning != "updated reasoning" {
+		t.Fatalf("expected updated reasoning, got %q", reasoning)
+	}
+}
+
+func TestUpdateDecisionTitle(t *testing.T) {
+	root, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	res, err := svc.ProposeAndVerifyDecision(context.Background(), ProposeDecisionInput{
+		Title:           "Original Title",
+		Reasoning:       "original reasoning",
+		EvidenceSummary: "go.mod exists",
+		CheckType:       "file_exists",
+		CheckSpec:       `{"path":"go.mod"}`,
+		ModuleRoot:      root,
+	})
+	if err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+
+	err = svc.UpdateDecision(context.Background(), res.DecisionID, UpdateDecisionInput{
+		Title: "New Title",
+	})
+	if err != nil {
+		t.Fatalf("UpdateDecision title: %v", err)
+	}
+
+	var title string
+	if err := conn.QueryRow(`SELECT title FROM decisions WHERE id = ?`, res.DecisionID).Scan(&title); err != nil {
+		t.Fatalf("query title: %v", err)
+	}
+	if title != "New Title" {
+		t.Fatalf("expected New Title, got %q", title)
+	}
+}
+
+func TestUpdateDecision_NotFound(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	err := svc.UpdateDecision(context.Background(), 9999, UpdateDecisionInput{
+		Title: "x",
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdateDecision_EmptyInput(t *testing.T) {
+	_, conn := setupKnowledgeEnv(t)
+	defer conn.Close()
+	svc := NewService(conn)
+
+	err := svc.UpdateDecision(context.Background(), 1, UpdateDecisionInput{})
+	if err == nil {
+		t.Fatal("expected error for empty UpdateDecisionInput")
+	}
+}

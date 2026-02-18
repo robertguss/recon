@@ -96,6 +96,10 @@ recon find --kind func --limit 100              # increase result limit
 
 # Package exploration
 recon find --list-packages                      # all packages with line counts and heat
+
+# Import/dependency search
+recon find --imports-of internal/cli            # what does internal/cli import?
+recon find --imported-by internal/db            # what imports internal/db?
 ```
 
 Flags:
@@ -110,6 +114,8 @@ Flags:
   and activity heat
 - `--no-body` — omit symbol body in text output
 - `--max-body-lines <n>` — truncate body to N lines (0 = no limit)
+- `--imports-of <package>` — list packages imported by this package
+- `--imported-by <package>` — list packages that import this package
 
 ### `recon decide [<title>]`
 
@@ -140,16 +146,18 @@ recon decide "Title" --reasoning "..." --evidence-summary "..." \
   --check-type file_exists --check-path go.mod \
   --affects internal/cli --affects internal/db
 
-# List, update, delete
+# List, update, archive
 recon decide --list                              # list active decisions with drift status
-recon decide --delete 3                          # archive (soft-delete) decision #3
+recon decide --archive 3                         # archive (soft-delete) decision #3
 recon decide --update 3 --confidence high        # update confidence level
+recon decide --update 3 --reasoning "new text"  # update reasoning
+recon decide --update 3 --title "new title"     # update title
 recon decide --dry-run --check-type grep_pattern --check-pattern "ExitError"  # test a check without creating state
 ```
 
 Flags:
 
-- `--reasoning <text>` — why this decision was made
+- `--reasoning <text>` — why this decision was made (also used for `--update`)
 - `--confidence <level>` — `low`, `medium` (default), `high`
 - `--evidence-summary <text>` — summary of supporting evidence
 - `--check-type <type>` — verification type: `file_exists`, `symbol_exists`,
@@ -162,8 +170,10 @@ Flags:
 - `--affects <ref>` — package/file/symbol this decision affects (creates edges,
   repeatable)
 - `--list` — list active decisions
-- `--delete <id>` — archive a decision by ID
-- `--update <id>` — update a decision by ID (use with `--confidence`)
+- `--archive <id>` — archive a decision by ID (`--delete` is a hidden alias)
+- `--update <id>` — update a decision by ID (use with `--confidence`,
+  `--reasoning`, or `--title`)
+- `--title <text>` — new title (for `--update` mode)
 - `--dry-run` — run verification check only, without creating any state
 - `--json` — output JSON
 
@@ -185,14 +195,16 @@ recon pattern "Title" --reasoning "..." --evidence-summary "..." \
   --check-type file_exists --check-path go.mod \
   --affects internal/cli
 
-# List and delete
+# List, update, and archive
 recon pattern --list                             # list active patterns with drift status
-recon pattern --delete 2                         # archive (soft-delete) pattern #2
+recon pattern --archive 2                        # archive (soft-delete) pattern #2
+recon pattern --update 2 --reasoning "new desc" # update description
+recon pattern --update 2 --title "new title"    # update title
 ```
 
 Flags:
 
-- `--reasoning <text>` — why this pattern matters
+- `--reasoning <text>` — why this pattern matters (also used for `--update`)
 - `--example <text>` — code example demonstrating the pattern
 - `--confidence <level>` — `low`, `medium` (default), `high`
 - `--evidence-summary <text>` — summary of supporting evidence
@@ -206,7 +218,9 @@ Flags:
 - `--affects <ref>` — package/file/symbol this pattern affects (creates edges,
   repeatable)
 - `--list` — list active patterns
-- `--delete <id>` — archive a pattern by ID
+- `--archive <id>` — archive a pattern by ID (`--delete` is a hidden alias)
+- `--update <id>` — update a pattern by ID (use with `--reasoning` or `--title`)
+- `--title <text>` — new title (for `--update` mode)
 - `--json` — output JSON
 
 ### `recon recall <query>`
@@ -284,6 +298,21 @@ Flags:
 - `--confidence <level>` — `low`, `medium`, `high` (default)
 - `--list` — list all edges
 - `--delete <id>` — delete an edge by ID
+- `--json` — output JSON
+
+### `recon reset`
+
+Delete the recon database for a clean slate. Does not delete the `.recon/`
+directory, only the database file. Run `recon init` afterward to reinitialize.
+
+```bash
+recon reset           # interactive confirmation
+recon reset --force   # skip confirmation
+```
+
+Flags:
+
+- `--force` — skip confirmation prompt
 - `--json` — output JSON
 
 ### `recon version`

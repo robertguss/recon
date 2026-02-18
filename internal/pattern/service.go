@@ -151,6 +151,68 @@ VALUES ('proposal', ?, ?, ?, ?, ?, ?, ?, 'broken');
 
 var ErrNotFound = fmt.Errorf("not found")
 
+type UpdatePatternInput struct {
+	Title       string
+	Description string
+}
+
+func (s *Service) UpdatePattern(ctx context.Context, id int64, in UpdatePatternInput) error {
+	if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.Description) == "" {
+		return fmt.Errorf("at least one field (title, description) is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	setClauses := []string{"updated_at = ?"}
+	args := []any{now}
+
+	if strings.TrimSpace(in.Title) != "" {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, strings.TrimSpace(in.Title))
+	}
+	if strings.TrimSpace(in.Description) != "" {
+		setClauses = append(setClauses, "description = ?")
+		args = append(args, strings.TrimSpace(in.Description))
+	}
+	args = append(args, id)
+
+	query := "UPDATE patterns SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = ? AND status = 'active';"
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update pattern: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pattern %d: %w", id, ErrNotFound)
+	}
+
+	var title, description, example, evidenceSummary string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT p.title, p.description,
+		        COALESCE(json_extract(pr.entity_data, '$.example'), ''),
+		        COALESCE(e.summary, '')
+		 FROM patterns p
+		 LEFT JOIN evidence e ON e.entity_type = 'pattern' AND e.entity_id = p.id
+		 LEFT JOIN proposals pr ON pr.entity_type = 'pattern'
+		     AND pr.status = 'promoted'
+		     AND e.summary IS NOT NULL
+		     AND json_extract(pr.entity_data, '$.evidence_summary') = e.summary
+		 WHERE p.id = ?`, id,
+	).Scan(&title, &description, &example, &evidenceSummary); err != nil {
+		return fmt.Errorf("read updated pattern for reindex: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE search_index SET title = ?, content = ? WHERE entity_type = 'pattern' AND entity_id = ?`,
+		title, description+"\n"+example+"\n"+evidenceSummary, id,
+	); err != nil {
+		return fmt.Errorf("reindex pattern: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) ArchivePattern(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE patterns SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active';`,

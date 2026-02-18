@@ -51,6 +51,7 @@ func NewRootCommand(ctx context.Context) (*cobra.Command, error) {
 	root.AddCommand(newStatusCommand(app))
 	root.AddCommand(newEdgesCommand(app))
 	root.AddCommand(newVersionCommand())
+	root.AddCommand(newResetCommand(app))
 
 	return root, nil
 }

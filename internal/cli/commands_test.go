@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robertguss/recon/internal/db"
 	"github.com/robertguss/recon/internal/index"
 	"github.com/robertguss/recon/internal/orient"
 	"github.com/spf13/cobra"
@@ -1408,5 +1410,330 @@ func TestInitInstallsClaudeCodeFiles(t *testing.T) {
 	}
 	if !strings.Contains(out, "Claude Code integration installed") {
 		t.Fatalf("expected Claude Code mention in text, out=%q", out)
+	}
+}
+
+// setupInitializedApp creates a temp module root and runs init, returning a ready *App.
+func setupInitializedApp(t *testing.T) *App {
+	t.Helper()
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"}); err != nil {
+		t.Fatalf("setupInitializedApp init: %v", err)
+	}
+	return app
+}
+
+// createTestDecision creates a promoted decision in a fresh DB and returns its ID.
+func createTestDecision(t *testing.T, app *App, title string) int64 {
+	t.Helper()
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		title,
+		"--reasoning", "test reasoning",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-spec", `{"path":"go.mod"}`,
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("createTestDecision: %v (out=%q)", err, out)
+	}
+	var result struct {
+		DecisionID int64 `json:"decision_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || result.DecisionID == 0 {
+		t.Fatalf("createTestDecision: parse id: %v (out=%q)", err, out)
+	}
+	return result.DecisionID
+}
+
+// createTestPattern creates a promoted pattern in a fresh DB and returns its ID.
+func createTestPattern(t *testing.T, app *App, title string) int64 {
+	t.Helper()
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		title,
+		"--reasoning", "test description",
+		"--evidence-summary", "go.mod exists",
+		"--check-type", "file_exists",
+		"--check-spec", `{"path":"go.mod"}`,
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("createTestPattern: %v (out=%q)", err, out)
+	}
+	var result struct {
+		PatternID int64 `json:"pattern_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || result.PatternID == 0 {
+		t.Fatalf("createTestPattern: parse id: %v (out=%q)", err, out)
+	}
+	return result.PatternID
+}
+
+func TestDecideUpdateReasoning(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--reasoning", "new reasoning text",
+	})
+	if err != nil {
+		t.Fatalf("update reasoning: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestDecideUpdateTitle(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--title", "New Decision Title",
+	})
+	if err != nil {
+		t.Fatalf("update title: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestDecideUpdate_NoFieldsError(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Use Cobra")
+	_, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+	})
+	if err == nil {
+		t.Fatal("expected error for --update with no fields")
+	}
+}
+
+func TestPatternUpdateReasoning(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--reasoning", "new description text",
+	})
+	if err != nil {
+		t.Fatalf("update pattern reasoning: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestPatternUpdateTitle(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+		"--title", "New Pattern Title",
+	})
+	if err != nil {
+		t.Fatalf("update pattern title: %v", err)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected 'updated' in output, got: %s", out)
+	}
+}
+
+func TestPatternUpdate_NoFieldsError(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Service struct pattern")
+	_, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--update", fmt.Sprintf("%d", id),
+	})
+	if err == nil {
+		t.Fatal("expected error for --update with no fields")
+	}
+}
+
+// seedImportGraph inserts two packages and an import relationship into an initialized DB.
+func seedImportGraph(t *testing.T, app *App) {
+	t.Helper()
+	conn, err := openExistingDB(app)
+	if err != nil {
+		t.Fatalf("seedImportGraph open db: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (100,'internal/cli','cli','example.com/recon/internal/cli',1,10,'x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert cli package: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO packages(id,path,name,import_path,file_count,line_count,created_at,updated_at) VALUES (200,'internal/db','db','example.com/recon/internal/db',1,10,'x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert db package: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO files(id,package_id,path,language,lines,hash,created_at,updated_at) VALUES (100,100,'internal/cli/root.go','go',10,'h','x','x');`); err != nil {
+		t.Fatalf("seedImportGraph insert file: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO imports(id,from_file_id,to_path,to_package_id,alias,import_type) VALUES (100,100,'example.com/recon/internal/db',200,'','regular');`); err != nil {
+		t.Fatalf("seedImportGraph insert import: %v", err)
+	}
+}
+
+func TestFindImportsOf(t *testing.T) {
+	app := setupInitializedApp(t)
+	seedImportGraph(t, app)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imports-of", "internal/cli"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "internal/db") {
+		t.Errorf("expected internal/db in output, got: %s", out)
+	}
+}
+
+func TestFindImportedBy(t *testing.T) {
+	app := setupInitializedApp(t)
+	seedImportGraph(t, app)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imported-by", "internal/db"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "internal/cli") {
+		t.Errorf("expected internal/cli in output, got: %s", out)
+	}
+}
+
+func TestFindImportsOf_Empty(t *testing.T) {
+	app := setupInitializedApp(t)
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"--imports-of", "internal/nonexistent"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "No imports found") {
+		t.Errorf("expected no-imports message, got: %s", out)
+	}
+}
+
+func TestDecideArchiveFlag(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Archive me")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--archive", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestDecideDeleteFlagStillWorks(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestDecision(t, app, "Delete me via old flag")
+	out, _, err := runCommandWithCapture(t, newDecideCommand(app), []string{
+		"--delete", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("--delete backward compat: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestPatternArchiveFlag(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Archive me")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--archive", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestPatternDeleteFlagStillWorks(t *testing.T) {
+	app := setupInitializedApp(t)
+	id := createTestPattern(t, app, "Delete me via old flag")
+	out, _, err := runCommandWithCapture(t, newPatternCommand(app), []string{
+		"--delete", fmt.Sprintf("%d", id),
+	})
+	if err != nil {
+		t.Fatalf("--delete backward compat: %v", err)
+	}
+	if !strings.Contains(out, "archived") {
+		t.Errorf("expected 'archived' in output, got: %s", out)
+	}
+}
+
+func TestResetCommand(t *testing.T) {
+	app := setupInitializedApp(t)
+	// Verify DB exists before reset
+	dbPath := db.DBPath(app.ModuleRoot)
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("expected db to exist before reset: %v", err)
+	}
+	out, _, err := runCommandWithCapture(t, newResetCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("reset --force: %v", err)
+	}
+	if !strings.Contains(out, "reset") {
+		t.Errorf("expected 'reset' in output, got: %s", out)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("expected db file to be deleted after reset")
+	}
+}
+
+func TestResetCommand_NotInitialized(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	// No init — DB does not exist
+	out, _, err := runCommandWithCapture(t, newResetCommand(app), []string{"--force"})
+	if err != nil {
+		t.Fatalf("reset on uninitialized: %v", err)
+	}
+	if !strings.Contains(out, "Nothing to reset") {
+		t.Errorf("expected 'Nothing to reset' in output, got: %s", out)
+	}
+}
+
+func TestFindAmbiguousShowsHint(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	// Init + sync to populate the DB with pkg1.Ambig and pkg2.Ambig
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	// Find Ambig in text mode — should fail with ambiguous and include hint
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Ambig"})
+	if err == nil {
+		t.Fatal("expected ambiguous error")
+	}
+	if !strings.Contains(out, "Try:") {
+		t.Errorf("expected 'Try:' hint in output, got: %s", out)
+	}
+}
+
+func TestEdgesListShowsTitles(t *testing.T) {
+	app := setupInitializedApp(t)
+	// Create a decision, then create an edge from it
+	decisionID := createTestDecision(t, app, "ExitError is the standard error")
+	if _, _, err := runCommandWithCapture(t, newEdgesCommand(app), []string{
+		"--create",
+		"--from", fmt.Sprintf("decision:%d", decisionID),
+		"--to", "package:internal/cli",
+		"--relation", "affects",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+	out, _, err := runCommandWithCapture(t, newEdgesCommand(app), []string{"--list"})
+	if err != nil {
+		t.Fatalf("list edges: %v", err)
+	}
+	if !strings.Contains(out, "ExitError is the standard error") {
+		t.Errorf("expected decision title in output, got: %s", out)
 	}
 }

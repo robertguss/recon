@@ -163,4 +163,14 @@ Run `recon <command> --help` for flags and usage. Use the `/recon` skill for the
 full reference. All commands support `--json` for structured output.
 
 Commands: `init`, `sync`, `orient`, `find`, `decide`, `pattern`, `recall`,
-`status`, `edges`, `version`
+`status`, `edges`, `reset`, `version`
+
+New flags (see `/recon` skill for full reference):
+
+- `recon decide --archive <id>` (was `--delete`; `--delete` kept as hidden
+  alias)
+- `recon decide --update <id> --title "..."` and `--reasoning "..."`
+- `recon pattern --archive <id>`, `--update <id> --title/--reasoning`
+- `recon find --imports-of <pkg>` — list what a package imports
+- `recon find --imported-by <pkg>` — list what imports a package
+- `recon reset [--force]` — delete the database for a clean slate

@@ -14,6 +14,7 @@ import (
 func newDecideCommand(app *App) *cobra.Command {
 	var (
 		reasoning       string
+		updateTitle     string
 		confidence      string
 		evidenceSummary string
 		checkType       string
@@ -100,8 +101,12 @@ func newDecideCommand(app *App) *cobra.Command {
 
 			// Update mode
 			if updateID > 0 {
-				if !cmd.Flags().Changed("confidence") {
-					msg := "--confidence is required when using --update"
+				titleChanged := cmd.Flags().Changed("title")
+				reasoningChanged := cmd.Flags().Changed("reasoning")
+				confidenceChanged := cmd.Flags().Changed("confidence")
+
+				if !titleChanged && !reasoningChanged && !confidenceChanged {
+					msg := "--update requires at least one of --confidence, --reasoning, or --title"
 					if jsonOut {
 						_ = writeJSONError("missing_argument", msg, map[string]any{"id": updateID})
 						return ExitError{Code: 2}
@@ -118,25 +123,56 @@ func newDecideCommand(app *App) *cobra.Command {
 				}
 				defer conn.Close()
 
-				err = knowledge.NewService(conn).UpdateConfidence(cmd.Context(), updateID, confidence)
-				if err != nil {
-					if jsonOut {
-						code := "internal_error"
-						switch {
-						case errors.Is(err, knowledge.ErrNotFound):
-							code = "not_found"
-						case strings.Contains(err.Error(), "confidence must be"):
-							code = "invalid_input"
+				svc := knowledge.NewService(conn)
+
+				if confidenceChanged {
+					if err := svc.UpdateConfidence(cmd.Context(), updateID, confidence); err != nil {
+						if jsonOut {
+							code := "internal_error"
+							switch {
+							case errors.Is(err, knowledge.ErrNotFound):
+								code = "not_found"
+							case strings.Contains(err.Error(), "confidence must be"):
+								code = "invalid_input"
+							}
+							_ = writeJSONError(code, err.Error(), map[string]any{"id": updateID})
+							return ExitError{Code: 2}
 						}
-						_ = writeJSONError(code, err.Error(), map[string]any{"id": updateID})
-						return ExitError{Code: 2}
+						return err
 					}
-					return err
 				}
+
+				if titleChanged || reasoningChanged {
+					if err := svc.UpdateDecision(cmd.Context(), updateID, knowledge.UpdateDecisionInput{
+						Title:     updateTitle,
+						Reasoning: reasoning,
+					}); err != nil {
+						if jsonOut {
+							code := "internal_error"
+							if errors.Is(err, knowledge.ErrNotFound) {
+								code = "not_found"
+							}
+							_ = writeJSONError(code, err.Error(), map[string]any{"id": updateID})
+							return ExitError{Code: 2}
+						}
+						return err
+					}
+				}
+
 				if jsonOut {
-					return writeJSON(map[string]any{"updated": true, "id": updateID, "confidence": confidence})
+					fields := map[string]any{"updated": true, "id": updateID}
+					if confidenceChanged {
+						fields["confidence"] = confidence
+					}
+					if titleChanged {
+						fields["title"] = updateTitle
+					}
+					if reasoningChanged {
+						fields["reasoning"] = reasoning
+					}
+					return writeJSON(fields)
 				}
-				fmt.Printf("Decision %d confidence updated to %s.\n", updateID, confidence)
+				fmt.Printf("Decision %d updated.\n", updateID)
 				return nil
 			}
 
@@ -301,8 +337,12 @@ func newDecideCommand(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&checkScope, "check-scope", "", "Typed check field for grep_pattern: optional file glob scope")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&listFlag, "list", false, "List active decisions")
-	cmd.Flags().Int64Var(&deleteID, "delete", 0, "Archive (soft-delete) a decision by ID")
-	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence)")
+	cmd.Flags().Int64Var(&deleteID, "archive", 0, "Archive (soft-delete) a decision by ID")
+	// --delete kept as a hidden alias for backward compatibility
+	cmd.Flags().Int64Var(&deleteID, "delete", 0, "")
+	_ = cmd.Flags().MarkHidden("delete")
+	cmd.Flags().Int64Var(&updateID, "update", 0, "Update a decision by ID (use with --confidence, --reasoning, or --title)")
+	cmd.Flags().StringVar(&updateTitle, "title", "", "New title (for --update mode)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run verification check only, without creating any state")
 	cmd.Flags().StringSliceVar(&affectsRefs, "affects", nil, "Package/file/symbol this decision affects (creates edges)")
 

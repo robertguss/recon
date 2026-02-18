@@ -272,7 +272,7 @@ func TestM4DecideUpdateTextSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected update success, got %v", err)
 	}
-	if !strings.Contains(out, "Decision 1 confidence updated to high.") {
+	if !strings.Contains(out, "Decision 1 updated.") {
 		t.Fatalf("expected update message, out=%q", out)
 	}
 }
@@ -1011,8 +1011,8 @@ func TestM4DecideUpdateTextMissingConfidence(t *testing.T) {
 	if !ok || ee.Code != 2 {
 		t.Fatalf("expected ExitError code 2, got %v", err)
 	}
-	if !strings.Contains(ee.Message, "--confidence is required") {
-		t.Fatalf("expected confidence required message, got %q", ee.Message)
+	if !strings.Contains(ee.Message, "--update requires at least one of") {
+		t.Fatalf("expected at-least-one-of message, got %q", ee.Message)
 	}
 }
 
