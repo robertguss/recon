@@ -228,6 +228,14 @@ func newFindCommand(app *App) *cobra.Command {
 							}
 							fmt.Printf("- %s %s (%s, pkg %s)\n", candidate.Kind, label, candidate.FilePath, candidate.Package)
 						}
+						if len(e.Candidates) > 0 {
+							c := e.Candidates[0]
+							label := symbol
+							if c.Receiver != "" {
+								label = c.Receiver + "." + symbol
+							}
+							fmt.Printf("\nTry: recon find %s --package %s\n", label, c.Package)
+						}
 					}
 					return ExitError{Code: 2}
 				default:

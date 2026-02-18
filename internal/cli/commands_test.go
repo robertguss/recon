@@ -1689,6 +1689,26 @@ func TestResetCommand_NotInitialized(t *testing.T) {
 	}
 }
 
+func TestFindAmbiguousShowsHint(t *testing.T) {
+	root := setupModuleRoot(t)
+	app := &App{Context: context.Background(), ModuleRoot: root}
+	// Init + sync to populate the DB with pkg1.Ambig and pkg2.Ambig
+	if _, _, err := runCommandWithCapture(t, newInitCommand(app), []string{"--force"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := runCommandWithCapture(t, newSyncCommand(app), nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	// Find Ambig in text mode — should fail with ambiguous and include hint
+	out, _, err := runCommandWithCapture(t, newFindCommand(app), []string{"Ambig"})
+	if err == nil {
+		t.Fatal("expected ambiguous error")
+	}
+	if !strings.Contains(out, "Try:") {
+		t.Errorf("expected 'Try:' hint in output, got: %s", out)
+	}
+}
+
 func TestEdgesListShowsTitles(t *testing.T) {
 	app := setupInitializedApp(t)
 	// Create a decision, then create an edge from it
